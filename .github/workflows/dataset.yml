@@ -103,7 +103,10 @@ jobs:
         run: |
           lake env "$RUNNER_TEMP/trust-extract/trust-extract" extract --root TauCeti \
             --repo TauCetiProject/TauCeti --out "$RUNNER_TEMP/dataset" --parts 8 --jobs 1 \
-            --skip-modules-file "$RUNNER_TEMP/unbuilt.txt"
+            --skip-modules-file "$RUNNER_TEMP/unbuilt.txt" \
+            --no-statements --no-signatures --no-upstream-docs
+          # This page shows neither statements taken apart nor hovers: the three flags keep the
+          # dataset at the size it had before trust-extract 0.4 (Tau Ceti's would otherwise double).
           du -sh "$RUNNER_TEMP/dataset"
       - name: Publish
         if: steps.published.outputs.done != 'true'
