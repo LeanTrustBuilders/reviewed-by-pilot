@@ -3,8 +3,10 @@ name: Dataset
 # Extracts a dataset (S2) from Tau Ceti at a commit with trust-extract, and publishes it as the
 # release `dataset-<commit>` of this repository, where every other workflow finds it.
 #
-# Tau Ceti's modules come from its public Lake cache and Mathlib's from Mathlib's, so nothing is
-# compiled; trust-extract is the release of LeanTrustBuilders/extractor for Tau Ceti's toolchain.
+# Tau Ceti's modules come from its public Lake cache and Mathlib's from Mathlib's, so little is
+# compiled: only what the cache lacks. A module that does not build is left out, and the dataset
+# says so (library.unavailable). trust-extract is the newest release of LeanTrustBuilders/extractor
+# for Tau Ceti's toolchain.
 on:
   workflow_dispatch:
     inputs:
@@ -71,19 +73,28 @@ jobs:
         run: |
           lake exe cache get
           bash scripts/lake-cache-get.sh .
-          # The cache can lag behind the newest commits: build whatever it does not have.
+          # The cache can lag behind the newest commits: build whatever it does not have. A module
+          # that does not build at this commit is left out of the dataset, with its importers.
           if ! lake build --no-build > /dev/null 2>&1; then
             echo "::notice::Not every module is in the cache; building the rest"
-            lake build 2>&1 | tail -5
+            lake build 2>&1 | tail -5 || true
           fi
-          lake build --no-build
+          { lake build --no-build 2>&1 || true; } | sed -n '/logged failures/,$s/^- //p' > "$RUNNER_TEMP/unbuilt.txt"
+          if [ -s "$RUNNER_TEMP/unbuilt.txt" ]; then
+            echo "::warning::$(wc -l < "$RUNNER_TEMP/unbuilt.txt") modules do not build at $COMMIT and are left out: $(paste -sd' ' "$RUNNER_TEMP/unbuilt.txt")"
+          fi
       - name: trust-extract for Tau Ceti's toolchain
         if: steps.published.outputs.done != 'true'
         run: |
           toolchain=$(sed 's/.*:v//' "$RUNNER_TEMP/TauCeti/lean-toolchain")
-          if ! gh release download "v$toolchain" -R LeanTrustBuilders/extractor -p 'trust-extract-linux-x86_64.tar.gz' -D "$RUNNER_TEMP"; then
+          # The newest release for this toolchain: tagged v<version>-lean-v<toolchain> (the first
+          # one was tagged v<toolchain>).
+          tag=$(gh release list -R LeanTrustBuilders/extractor --limit 100 --json tagName,createdAt \
+            --jq "[.[] | select(.tagName == \"v$toolchain\" or (.tagName | endswith(\"-lean-v$toolchain\")))] | sort_by(.createdAt) | last | .tagName // empty")
+          if [ -z "$tag" ] || ! gh release download "$tag" -R LeanTrustBuilders/extractor -p 'trust-extract-linux-x86_64.tar.gz' -D "$RUNNER_TEMP"; then
             echo "::error::LeanTrustBuilders/extractor has no release for Lean v$toolchain yet"; exit 1
           fi
+          echo "trust-extract release $tag"
           tar -xzf "$RUNNER_TEMP/trust-extract-linux-x86_64.tar.gz" -C "$RUNNER_TEMP"
           "$RUNNER_TEMP/trust-extract/trust-extract" version
       - name: Extract
@@ -91,7 +102,8 @@ jobs:
         working-directory: ${{ runner.temp }}/TauCeti
         run: |
           lake env "$RUNNER_TEMP/trust-extract/trust-extract" extract --root TauCeti \
-            --repo TauCetiProject/TauCeti --out "$RUNNER_TEMP/dataset" --parts 8 --jobs 1
+            --repo TauCetiProject/TauCeti --out "$RUNNER_TEMP/dataset" --parts 8 --jobs 1 \
+            --skip-modules-file "$RUNNER_TEMP/unbuilt.txt"
           du -sh "$RUNNER_TEMP/dataset"
       - name: Publish
         if: steps.published.outputs.done != 'true'

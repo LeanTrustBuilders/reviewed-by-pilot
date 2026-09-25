@@ -632,6 +632,12 @@ def page(index: dict, records: list, settings: dict, problems: list = (), named_
     bulk = f"https://github.com/{settings['repo']}/issues/{settings['bulk_issue']}"
     legend = "".join(f"<dt>{t}</dt><dd>{m}</dd>" for t, m in MEANING.items())
     repo = html.escape(settings["repo"])
+    # Modules that did not build at the pinned commit: the dataset leaves them out, with their
+    # declarations and the marks on them, until they build again.
+    unavailable = (index.get("dataset") or {}).get("unavailable") or []
+    missing = (f" {len(unavailable)} module{'s' if len(unavailable) != 1 else ''} did not build at this commit and "
+               f"{'are' if len(unavailable) != 1 else 'is'} left out, with {'their' if len(unavailable) != 1 else 'its'} "
+               f"declarations and the marks on them: {', '.join(html.escape(m) for m in unavailable)}.") if unavailable else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -676,7 +682,7 @@ def page(index: dict, records: list, settings: dict, problems: list = (), named_
   <aside class="panel" id="panel" aria-live="polite"></aside>
 </div>
 <footer>
-  <p>The marks as data, for the atlas or Tau Ceti's own documentation: <a href="reviews.json">reviews.json</a>. The evidence records (S3): <a href="https://github.com/{repo}/blob/main/reviews/evidence.jsonl">reviews/evidence.jsonl</a>. Declarations and hashes come from a dataset extracted from the compiled library by <a href="https://github.com/LeanTrustBuilders/extractor">trust-extract</a>; statuses and coverage are computed by <a href="https://github.com/LeanTrustBuilders/evidence-core">evidence-core</a>. The pilot of the <a href="https://github.com/LeanTrustBuilders">LeanTrustBuilders</a> suite, in <a href="https://github.com/{repo}">{repo}</a>; nothing here changes Tau Ceti.</p>
+  <p>The marks as data, for the atlas or Tau Ceti's own documentation: <a href="reviews.json">reviews.json</a>. The evidence records (S3): <a href="https://github.com/{repo}/blob/main/reviews/evidence.jsonl">reviews/evidence.jsonl</a>. Declarations and hashes come from a dataset extracted from the compiled library by <a href="https://github.com/LeanTrustBuilders/extractor">trust-extract</a>; statuses and coverage are computed by <a href="https://github.com/LeanTrustBuilders/evidence-core">evidence-core</a>. The pilot of the <a href="https://github.com/LeanTrustBuilders">LeanTrustBuilders</a> suite, in <a href="https://github.com/{repo}">{repo}</a>; nothing here changes Tau Ceti.{missing}</p>
 </footer>
 <script type="application/json" id="settings">{config}</script>
 <script>{SCRIPT}</script>

@@ -12,7 +12,8 @@ the page is unchanged, with these differences:
 - `hash` is the declaration's **meaning hash** (semantic_hash, proof-irrelevant, deep): a mark keyed
   by it stays current until the meaning of the declaration or of anything it rests on changes;
 - `local` and `content` are the two other hashes of the declaration key (S1), and `package` its
-  package; the file also records the dataset it came from (`dataset`).
+  package; the file also records the dataset it came from (`dataset`), including the modules left
+  out because they did not build at the commit (`dataset.unavailable`).
 
 The `example`s that serve as unit tests are still read from the source, as fetch_declarations.py
 does: an `example` is elaborated and discarded, so the compiled library does not keep it.
@@ -89,7 +90,8 @@ def read(dataset: Dataset, clone: Path, commit: str) -> dict:
             "modules": modules, "declarations": found, "examples": resolve_tests(examples, names),
             "dataset": {"commit": dataset.commit, "producer": dataset.producer(),
                         "toolchain": dataset.toolchain, "hasher": dataset.hasher,
-                        "counts": dataset.meta.get("counts", {})}}
+                        "counts": dataset.meta.get("counts", {}),
+                        "unavailable": sorted(dataset.unavailable)}}
 
 
 def main() -> int:
