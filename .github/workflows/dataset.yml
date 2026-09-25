@@ -71,6 +71,11 @@ jobs:
         run: |
           lake exe cache get
           bash scripts/lake-cache-get.sh .
+          # The cache can lag behind the newest commits: build whatever it does not have.
+          if ! lake build --no-build > /dev/null 2>&1; then
+            echo "::notice::Not every module is in the cache; building the rest"
+            lake build 2>&1 | tail -5
+          fi
           lake build --no-build
       - name: trust-extract for Tau Ceti's toolchain
         if: steps.published.outputs.done != 'true'
