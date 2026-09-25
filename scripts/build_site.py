@@ -34,6 +34,13 @@ from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from named import named_by_declaration  # noqa: E402
+try:
+    from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
+    from evidence_core import records as evidence_records
+except ImportError:  # a checkout of evidence-core next to this repository
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evidence-core"))
+    from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
+    from evidence_core import records as evidence_records
 from reviews import load, reports, tally, tests_by_declaration  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +94,53 @@ def marks_by_declaration(index: dict, records: list) -> dict:
     return marks
 
 
+def issue_of(ref: str) -> tuple:
+    """(repository, issue number) of an origin reference like `owner/repo#12` or `owner/repo#12 comment 34`."""
+    repo, _, rest = ref.partition("#")
+    number = rest.split()[0] if rest else ""
+    return (repo, int(number)) if number.isdigit() else (repo, None)
+
+
+def marks_from_evidence(index: dict, ev) -> dict:
+    """Each declaration's review marks, from the S3 evidence records, with the status evidence-core
+    gives each against the dataset of the pinned commit: current, renamed (still current: it
+    followed the declaration to its new name), stale underneath (the declaration is written the
+    same, but something it rests on changed), or stale (the declaration changed)."""
+    names = {item["name"] for item in index["declarations"]}
+    marks = defaultdict(list)
+    for name, rows in ev.by_decl.items():
+        if name not in names:
+            continue
+        for r, s in rows:
+            if r.get("kind") != "review" or r.get("verdict") != "accept":
+                continue
+            by = r.get("by", {})
+            repo, issue = issue_of(r.get("origin", {}).get("ref", ""))
+            marks[name].append({
+                "trailer": "Reviewed-by", "by": by.get("identity", {}).get("id", ""),
+                "kind": by.get("kind", "person"), "agent": by.get("agent", ""),
+                "hash": r.get("subject", {}).get("hashes", {}).get("meaning", ""),
+                "current": s.applies, "status": s.state, "at": r.get("at", ""),
+                "evidence": r.get("rationale", ""), "source": {"issue": issue},
+                "url": f"https://github.com/{repo}/issues/{issue}" if repo and issue else "",
+                **({"from": r["subject"]["name"]} if s.state == "renamed" else {})})
+    for items in marks.values():
+        items.sort(key=lambda m: (not m["current"], m["kind"] == "agent", m["at"]))
+    return marks
+
+
+def named_coverage(named_decls: dict, ev) -> None:
+    """Adds to each named declaration how much of what its statement rests on is reviewed: the
+    project declarations in its meaning closure (itself included), those with a current review by a
+    person, and those with one by a person or an AI agent."""
+    for name, entry in named_decls.items():
+        people = coverage_of(ev, name, Policy())
+        anyone = coverage_of(ev, name, Policy(agents=True))
+        entry["coverage"] = {"members": len(people.members), "people": len(people.covered),
+                             "any": len(anyone.covered), "problems": len(people.with_problems),
+                             "upstream": len(people.upstream)}
+
+
 def summary(doc: str, limit: int = 120) -> str:
     """A docstring's first sentence, in plain text."""
     text = " ".join(doc.split())
@@ -122,15 +176,18 @@ def shards(index: dict) -> dict:
     return out
 
 
-def named(index: dict, roadmap: list = (), ledger: list = ()) -> dict:
+def named(index: dict, roadmap: list = (), ledger: list = (), ev=None) -> dict:
     """The named results and notable definitions: what to read first in a library
     whose other declarations are mostly API, glue and steps of proofs."""
+    found = named_by_declaration(index, list(roadmap), list(ledger))
+    if ev is not None:
+        named_coverage(found, ev)
     return {"schema": "named/v1", "tauceti": index["tauceti"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "declarations": named_by_declaration(index, list(roadmap), list(ledger))}
+            "declarations": found}
 
 
-def data(index: dict, records: list, problems: list = (), listed: list = (), suggestions: list = ()) -> dict:
-    marks = marks_by_declaration(index, records)
+def data(index: dict, records: list, problems: list = (), listed: list = (), suggestions: list = (), marks: dict | None = None) -> dict:
+    marks = marks if marks is not None else marks_by_declaration(index, records)
     found = problems_by_declaration(index, list(problems))
     tests = tests_by_declaration(index, list(listed), list(suggestions))
     by_name = {item["name"]: item for item in index["declarations"]}
@@ -138,6 +195,7 @@ def data(index: dict, records: list, problems: list = (), listed: list = (), sug
             "declarations": {name: {"hash": by_name[name]["hash"], "kind": by_name[name]["kind"], "url": by_name[name]["url"],
                                     "tally": tally(marks.get(name, [])),
                                     "marks": [{**{k: m[k] for k in ("trailer", "by", "kind", "agent", "hash", "current", "at", "evidence")},
+                                               **{k: m[k] for k in ("status", "url", "from") if m.get(k)},
                                                "issue": m.get("source", {}).get("issue")} for m in marks.get(name, [])],
                                     "problems": [{k: p[k] for k in PROBLEM_KEYS if k in p} for p in found.get(name, [])],
                                     **({"tests": tests[name]} if name in tests else {})}
@@ -424,8 +482,12 @@ function namedHtml(name) {
     }
     return esc(s.by ? '@' + s.by : 'a reader');
   });
+  const c = named.coverage;
+  const cover = c ? '<br><span class="from">What it says rests on ' + c.members + ' Tau Ceti declaration' + (c.members === 1 ? '' : 's') +
+    ' (itself included): ' + c.people + ' reviewed by people' + (c.any > c.people ? ', ' + c.any + ' counting AI agents' : '') +
+    (c.problems ? ', ' + c.problems + ' with an open problem' : '') + '.</span>' : '';
   return '<p class="namedline"><strong>' + esc(named.name) + '</strong>' + (named.about ? ' — ' + esc(named.about) : '') +
-    '<br><span class="from">Named ' + (named.what === 'definition' ? 'as a notable definition' : 'as a result') + ' by ' + from.join('; ') + '.</span></p>';
+    '<br><span class="from">Named ' + (named.what === 'definition' ? 'as a notable definition' : 'as a result') + ' by ' + from.join('; ') + '.</span>' + cover + '</p>';
 }
 function whoHtml(entry) {
   return Object.keys(MEANING).map(trailer => {
@@ -436,9 +498,11 @@ function whoHtml(entry) {
 function markHtml(m, named = true) {
   const who = m.kind === 'agent' ? esc(m.agent) + ' <span class="ai">AI</span> via @' + esc(m.by) : '@' + esc(m.by);
   const tip = m.trailer + ': ' + (MEANING[m.trailer] || '') + '. Version ' + m.hash + ', ' + when(m.at) + '.' + (m.evidence ? ' Evidence: ' + m.evidence : '');
-  const href = m.issue ? 'https://github.com/' + SETTINGS.repo + '/issues/' + m.issue : '#';
+  const href = m.url || (m.issue ? 'https://github.com/' + SETTINGS.repo + '/issues/' + m.issue : '#');
+  const note = m.current ? (m.status === 'renamed' ? ' <span class="note">made on ' + esc(m.from) + '</span>' : '') :
+    ' <span class="note">' + (m.status === 'stale-underneath' ? 'something it rests on changed since' : 'earlier version') + '</span>';
   return '<a class="mark ' + esc(m.kind) + (m.current ? '' : ' stale') + '" href="' + esc(href) + '" title="' + esc(tip) + '"><span class="tick" aria-hidden="true">✓</span>' +
-    (named ? '<span class="trailer">' + esc(m.trailer) + '</span> ' : '') + '<span class="who">' + who + '</span>' + (m.current ? '' : ' <span class="note">earlier version</span>') + '</a>';
+    (named ? '<span class="trailer">' + esc(m.trailer) + '</span> ' : '') + '<span class="who">' + who + '</span>' + note + '</a>';
 }
 function problemHtml(p) {
   const who = p.kind === 'agent' ? esc(p.agent) + ' <span class="ai">AI</span> via @' + esc(p.by) : '@' + esc(p.by);
@@ -590,7 +654,7 @@ def page(index: dict, records: list, settings: dict, problems: list = (), named_
   <ol>
     <li>Find the declaration, open it and press <strong>Review this</strong>: a GitHub form opens with its name and version filled in. Submit it to say it is the intended mathematical notion. Saying what you checked is optional for people; AI agents must.</li>
     <li>A bot records the mark, answers on the issue and closes it. There is no pull request, and this page updates within a few minutes.</li>
-    <li>If the declaration changes later, the mark stays but is greyed: it applies to the earlier version until someone reviews the new one.</li>
+    <li>A mark is keyed by the declaration's <em>meaning hash</em>, which changes when the declaration, or anything it rests on, changes meaning, and not when it is renamed, reformatted or re-proved. When it changes, the mark stays but is greyed, as <em>earlier version</em> if the declaration itself was rewritten, or as <em>something it rests on changed since</em> if it reads the same but a definition it uses moved. A renamed declaration keeps its marks.</li>
     <li>Each declaration counts its reviews, people apart from AI agents; <strong>Who</strong> lists them, with dates, versions and evidence.</li>
     <li><strong>Named</strong> shows only the named results and notable definitions: the ones the roadmaps' status files and Voyager's announcements single out, rather than the API and proof steps around them.</li>
   </ol>
@@ -612,7 +676,7 @@ def page(index: dict, records: list, settings: dict, problems: list = (), named_
   <aside class="panel" id="panel" aria-live="polite"></aside>
 </div>
 <footer>
-  <p>The marks as data, for the atlas or Tau Ceti's own documentation: <a href="reviews.json">reviews.json</a>. The ledger: <a href="https://github.com/{repo}/blob/main/reviews/records.jsonl">reviews/records.jsonl</a>. A test in <a href="https://github.com/{repo}">{repo}</a>; nothing here changes Tau Ceti.</p>
+  <p>The marks as data, for the atlas or Tau Ceti's own documentation: <a href="reviews.json">reviews.json</a>. The evidence records (S3): <a href="https://github.com/{repo}/blob/main/reviews/evidence.jsonl">reviews/evidence.jsonl</a>. Declarations and hashes come from a dataset extracted from the compiled library by <a href="https://github.com/LeanTrustBuilders/extractor">trust-extract</a>; statuses and coverage are computed by <a href="https://github.com/LeanTrustBuilders/evidence-core">evidence-core</a>. The pilot of the <a href="https://github.com/LeanTrustBuilders">LeanTrustBuilders</a> suite, in <a href="https://github.com/{repo}">{repo}</a>; nothing here changes Tau Ceti.</p>
 </footer>
 <script type="application/json" id="settings">{config}</script>
 <script>{SCRIPT}</script>
@@ -622,6 +686,11 @@ def page(index: dict, records: list, settings: dict, problems: list = (), named_
 
 
 def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset", type=Path, help="the dataset (S2) of the pinned commit: marks are then read from "
+                                                     "reviews/evidence.jsonl, with their statuses, and named results get coverage")
+    args = parser.parse_args()
     index = json.loads((ROOT / "data" / "declarations.json").read_text(encoding="utf-8"))
     settings = json.loads((ROOT / "data" / "settings.json").read_text(encoding="utf-8"))
     roadmap_named = json.loads((ROOT / "data" / "named-roadmaps.json").read_text(encoding="utf-8")) if (ROOT / "data" / "named-roadmaps.json").exists() else []
@@ -629,18 +698,22 @@ def main() -> int:
     records = load(ROOT / "reviews" / "records.jsonl")
     problems = load(ROOT / "reviews" / "problems.jsonl")
     listed, suggestions = load(ROOT / "reviews" / "tests.jsonl"), load(ROOT / "reviews" / "suggestions.jsonl")
+    ev = marks = None
+    if args.dataset:
+        ev = Evidence.resolve(evidence_records.load(ROOT / "reviews" / "evidence.jsonl"), Dataset.load(args.dataset))
+        marks = marks_from_evidence(index, ev)
     out = ROOT / "site"
     if (out / "data").exists():
         shutil.rmtree(out / "data")
     (out / "data" / "m").mkdir(parents=True)
     compact = {"ensure_ascii": False, "separators": (",", ":")}
     (out / "index.html").write_text(page(index, records, settings, problems, roadmap_named + announced), encoding="utf-8")
-    (out / "named.json").write_text(json.dumps(named(index, roadmap_named, announced), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    (out / "named.json").write_text(json.dumps(named(index, roadmap_named, announced, ev), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     (out / "data" / "search.json").write_text(json.dumps(search_index(index), **compact), encoding="utf-8")
     (out / "data" / "docs.json").write_text(json.dumps([summary(item["doc"]) for item in index["declarations"]], **compact), encoding="utf-8")
     for n, shard in shards(index).items():
         (out / "data" / "m" / f"{n}.json").write_text(json.dumps(shard, **compact), encoding="utf-8")
-    (out / "reviews.json").write_text(json.dumps(data(index, records, problems, listed, suggestions), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    (out / "reviews.json").write_text(json.dumps(data(index, records, problems, listed, suggestions, marks), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"site: {len(index['declarations'])} declarations in {len(index['modules'])} modules, "
           f"{len(named_by_declaration(index, roadmap_named, announced))} named, {len(records)} marks, {len(reports(problems))} problem reports")
     return 0

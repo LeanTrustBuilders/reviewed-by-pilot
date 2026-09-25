@@ -44,10 +44,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: ./.github/actions/declarations
+      - id: declarations
+        uses: ./.github/actions/declarations
+        with:
+          token: ${{ github.token }}
       - name: Read the marks or the report
         id: record
         run: python3 scripts/reviews.py from-event "$GITHUB_EVENT_PATH" --reply "$RUNNER_TEMP/reply.md" --out "$GITHUB_OUTPUT"
+      - name: Record them as evidence (S3), keyed by the dataset's hashes
+        if: steps.record.outputs.recorded != '0' && steps.declarations.outputs.dataset != ''
+        run: python3 scripts/evidence_sync.py --dataset "${{ steps.declarations.outputs.dataset }}"
       - name: Save the ledger
         if: steps.record.outputs.recorded != '0'
         env:

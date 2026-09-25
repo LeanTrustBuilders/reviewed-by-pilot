@@ -1,5 +1,10 @@
 {
- "repo": "CBirkbeck/tauceti-reviewed-by-test",
+ "repo": "LeanTrustBuilders/reviewed-by-pilot",
  "bulk_issue": 1,
- "tauceti": "c3fee65d60a0889ed940c1ee1e2d037087550143"
+ "tauceti": "d3aec47a6264b0e36d8845d0a18529b2409ce53a",
+ "inherited_ledger": {
+  "repo": "CBirkbeck/tauceti-reviewed-by-test",
+  "until": "2026-09-25T16:00:00Z",
+  "note": "ledger entries made before the fork came from issues of this repository"
+ }
 }

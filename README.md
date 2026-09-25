@@ -1,4 +1,47 @@
-# Reviewed-by for Tau Ceti — a test
+# Reviewed-by for Tau Ceti — pilot of the LeanTrustBuilders suite
+
+A fork of [CBirkbeck/tauceti-reviewed-by-test](https://github.com/CBirkbeck/tauceti-reviewed-by-test)
+that runs its review marks on the [LeanTrustBuilders](https://github.com/LeanTrustBuilders) suite:
+the first slice of the design in
+[`suite-design.md`](https://github.com/LeanTrustBuilders/design/blob/main/AI_initial_docs/suite-design.md).
+
+**Page:** https://leantrustbuilders.github.io/reviewed-by-pilot/
+
+## What the pilot changes
+
+| | the original | the pilot |
+|---|---|---|
+| declarations | read from Tau Ceti's source with regular expressions | read from a **dataset** extracted from the compiled library by [trust-extract](https://github.com/LeanTrustBuilders/extractor) (spec [S2](https://github.com/LeanTrustBuilders/specs/blob/main/S2-dataset.md)): true names (the regexes got 52 namespaces wrong at `d3aec47`), and 2,368 declarations the regexes cannot see (`@[to_additive]` twins, `@[simps]` lemmas, `deriving` instances) |
+| what a mark is keyed by | a hash of the declaration's text | the declaration's **meaning hash** (semantic_hash, proof-irrelevant, deep), with its local and content hashes: the key of spec [S1](https://github.com/LeanTrustBuilders/specs/blob/main/S1-declaration-key.md) |
+| when a mark goes stale | when the text changes | when the declaration **or anything it rests on** changes meaning. The page tells *earlier version* (the declaration itself was rewritten) from *something it rests on changed since* (it reads the same, a definition it uses moved), and keeps a mark on a renamed declaration |
+| the ledger | `reviews/*.jsonl` | the same ledgers, and **S3 evidence records** in [`reviews/evidence.jsonl`](reviews/evidence.jsonl) (spec [S3](https://github.com/LeanTrustBuilders/specs/blob/main/S3-evidence.md)), which the page reads |
+| named results | name and source | also **coverage**: how many of the Tau Ceti declarations the statement rests on are reviewed, by people and counting AI agents, computed by [evidence-core](https://github.com/LeanTrustBuilders/evidence-core) |
+
+The intake is unchanged: the same forms, the same comment lines on issue #1, the same bot.
+
+## How the pieces fit
+
+1. **[Dataset](.github/workflows/dataset.yml)**: for each Tau Ceti commit the page pins, a workflow
+   fetches Tau Ceti and Mathlib from their public caches, runs the `trust-extract` release for Tau
+   Ceti's toolchain, and publishes the dataset as the release `dataset-<commit>` of this repository.
+2. **[Declarations](.github/actions/declarations/action.yml)**: every workflow reads the pinned
+   commit's dataset into `data/declarations.json`
+   ([`scripts/dataset_declarations.py`](scripts/dataset_declarations.py)). When no dataset exists
+   (for instance, Tau Ceti moved to a toolchain the extractor has no release for yet), it falls back
+   to the regular expressions, and says so.
+3. **[Evidence](scripts/evidence_sync.py)**: after the bot records a mark, test, named result or
+   problem event in the ledgers, it is converted to an S3 record keyed by the dataset's hashes.
+   Idempotent. The marks recorded before the fork were migrated with datasets of the commits they
+   were made at, and still link to the original repository's issues.
+4. **[Page](scripts/build_site.py)**: marks come from the S3 records, each with the status
+   evidence-core gives it against the pinned commit's dataset.
+
+The `example`s that serve as unit tests are still read from the source: an `example` is elaborated
+and discarded, so the compiled library does not keep it.
+
+---
+
+## The original README
 
 A test of **review marks** on Tau Ceti declarations: who has checked which
 definition, what they checked, and on which version; and of the **tests** each
@@ -9,7 +52,7 @@ instead: what is wrong and why, in an issue that stays open until it is fixed. N
 declaration of Tau Ceti's main branch, read-only, at a pinned commit that
 follows main once a day.
 
-**Page:** https://cbirkbeck.github.io/tauceti-reviewed-by-test/
+**Original page:** https://cbirkbeck.github.io/tauceti-reviewed-by-test/
 
 ## Finding a declaration
 

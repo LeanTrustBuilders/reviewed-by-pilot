@@ -27,9 +27,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: ./.github/actions/declarations
+      - id: declarations
+        uses: ./.github/actions/declarations
+        with:
+          token: ${{ github.token }}
       - run: python3 -m unittest discover -s tests
-      - run: python3 scripts/build_site.py
+      - name: Build the page, with statuses and coverage from the dataset when there is one
+        env:
+          DATASET: ${{ steps.declarations.outputs.dataset }}
+        run: |
+          if [ -n "$DATASET" ]; then python3 scripts/build_site.py --dataset "$DATASET"; else python3 scripts/build_site.py; fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

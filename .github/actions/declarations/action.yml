@@ -1,5 +1,16 @@
 name: Tau Ceti declarations
-description: Check out Tau Ceti at the commit pinned in data/settings.json and read every declaration into data/declarations.json.
+description: >-
+  Check out Tau Ceti at the commit pinned in data/settings.json and read every declaration into
+  data/declarations.json: from the dataset (S2) published for that commit when there is one, so
+  that marks are keyed by semantic hashes; from the source otherwise.
+inputs:
+  token:
+    description: A token that can read this repository's releases.
+    required: true
+outputs:
+  dataset:
+    description: The directory of the dataset for the pinned commit, or empty when none was published.
+    value: ${{ steps.dataset.outputs.path }}
 runs:
   using: composite
   steps:
@@ -7,7 +18,27 @@ runs:
       shell: bash
       run: |
         commit=$(python3 -c "import json; print(json.load(open('data/settings.json'))['tauceti'])")
+        echo "TAUCETI_COMMIT=$commit" >> "$GITHUB_ENV"
         git init -q "$RUNNER_TEMP/TauCeti"
         git -C "$RUNNER_TEMP/TauCeti" fetch -q --depth 1 https://github.com/TauCetiProject/TauCeti.git "$commit"
         git -C "$RUNNER_TEMP/TauCeti" checkout -q FETCH_HEAD
-        python3 scripts/fetch_declarations.py --clone "$RUNNER_TEMP/TauCeti" --commit "$commit"
+    - name: evidence-core
+      shell: bash
+      run: pip install --quiet "git+https://github.com/LeanTrustBuilders/evidence-core@main"
+    - name: Declarations, from the dataset if one was published
+      id: dataset
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        tag="dataset-${TAUCETI_COMMIT:0:12}"
+        if gh release download "$tag" -R "$GITHUB_REPOSITORY" -p dataset.tar.gz -D "$RUNNER_TEMP" --clobber 2>/dev/null; then
+          mkdir -p "$RUNNER_TEMP/dataset"
+          tar -xzf "$RUNNER_TEMP/dataset.tar.gz" -C "$RUNNER_TEMP/dataset"
+          echo "path=$RUNNER_TEMP/dataset" >> "$GITHUB_OUTPUT"
+          python3 scripts/dataset_declarations.py --dataset "$RUNNER_TEMP/dataset" --clone "$RUNNER_TEMP/TauCeti" --commit "$TAUCETI_COMMIT"
+        else
+          echo "::warning::No dataset published for Tau Ceti $TAUCETI_COMMIT: declarations are read from the source, and marks are keyed by text"
+          echo "path=" >> "$GITHUB_OUTPUT"
+          python3 scripts/fetch_declarations.py --clone "$RUNNER_TEMP/TauCeti" --commit "$TAUCETI_COMMIT"
+        fi

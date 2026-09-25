@@ -60,9 +60,17 @@ jobs:
           git commit -q -am "Follow Tau Ceti to ${latest:0:7}"
           for attempt in 1 2 3 4 5; do git pull --rebase -q && git push -q && break; sleep $((attempt * 5)); done
           echo "moved=true" >> "$GITHUB_OUTPUT"
-  site:
+  dataset:
     needs: pin
     if: needs.pin.outputs.moved == 'true'
+    uses: ./.github/workflows/dataset.yml
+    permissions:
+      contents: write
+  site:
+    # Built even when the dataset could not be (for instance, when Tau Ceti moved to a toolchain the
+    # extractor has no release for yet): the page then reads declarations from the source.
+    needs: [pin, dataset]
+    if: always() && needs.pin.outputs.moved == 'true'
     uses: ./.github/workflows/pages.yml
     permissions:
       contents: read
