@@ -120,7 +120,7 @@ def marks_from_evidence(index: dict, ev) -> dict:
             repo, issue = issue_of(r.get("origin", {}).get("ref", ""))
             marks[name].append({
                 "trailer": "Reviewed-by", "by": by.get("identity", {}).get("id", ""),
-                "kind": by.get("kind", "person"), "agent": by.get("agent", ""),
+                "kind": by.get("kind", "person"), "agent": evidence_records.agent_label(by.get("agent")),
                 "hash": r.get("subject", {}).get("hashes", {}).get("meaning", ""),
                 "current": s.applies, "status": s.state, "at": r.get("at", ""),
                 "evidence": r.get("rationale", ""), "source": {"issue": issue},

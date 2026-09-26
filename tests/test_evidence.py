@@ -104,6 +104,15 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual([(m["status"], m["current"]) for m in later["T.foo"]], [("stale-underneath", False)])
         self.assertEqual(later["T.foo"][0]["url"], "https://github.com/owner/pilot/issues/3")
 
+    def test_an_agent_is_shown_by_its_label(self):
+        path = self.reviews / "records.jsonl"
+        entry = json.loads(path.read_text())
+        entry.update(kind="agent", agent="Claude Code, Opus 5, session 0957")
+        path.write_text(json.dumps(entry) + "\n")
+        self.sync()
+        [mark] = build_site.marks_from_evidence(self.index, Evidence.resolve(self.records(), self.a))["T.foo"]
+        self.assertEqual((mark["kind"], mark["agent"]), ("agent", "Claude Code (Opus 5)"))
+
     def test_named_coverage(self):
         self.sync()
         records = self.records()
