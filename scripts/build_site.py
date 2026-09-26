@@ -697,7 +697,7 @@ def main() -> int:
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, help="the dataset (S2) of the pinned commit: marks are then read from "
-                                                     "reviews/evidence.jsonl, with their statuses, and named results get coverage")
+                                                     "the evidence store evidence/, with their statuses, and named results get coverage")
     args = parser.parse_args()
     index = json.loads((ROOT / "data" / "declarations.json").read_text(encoding="utf-8"))
     settings = json.loads((ROOT / "data" / "settings.json").read_text(encoding="utf-8"))
