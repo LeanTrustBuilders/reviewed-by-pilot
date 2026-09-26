@@ -37,14 +37,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
-    from evidence_core import records as evidence_records
-    from evidence_core.store import Store
-except ImportError:  # a checkout of evidence-core next to this repository
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evidence-core"))
-    from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
-    from evidence_core import records as evidence_records
-    from evidence_core.store import Store
+    import evidence_core, evidence_store  # noqa: F401
+except ImportError:  # checkouts of evidence-core and evidence-store next to this repository
+    sys.path[:0] = [str(Path(__file__).resolve().parents[2] / r) for r in ("evidence-core", "evidence-store")]
+from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
+from evidence_core import records as evidence_records
+from evidence_core.store import Store
+from evidence_core.views import by_view, views_on
+from evidence_store.forms import FORMS
 
 ROOT = Path(__file__).resolve().parents[1]
 MEANING = {"Reviewed-by": "it is the intended mathematical notion"}
@@ -55,51 +55,37 @@ PROBLEM_STATE = {"open": "open", "fixed": "fixed", "intended": "intended", "inva
 CHALLENGE_STATE = {"open": "open", "met": "written", "failed": "failed", "declined": "not planned", "withdrawn": "withdrawn"}
 
 
-def issue_of(ref: str) -> tuple:
-    """(repository, issue number) of an origin reference like `owner/repo#12`, `owner/repo#12/event/5`
-    or a comment's URL."""
-    m = re.search(r"github\.com/([^/]+/[^/]+)/issues/(\d+)", ref or "")
-    if m:
-        return m.group(1), int(m.group(2))
-    repo, _, rest = (ref or "").partition("#")
-    number = re.match(r"\d+", rest)
-    return (repo, int(number.group(0))) if number else (repo, None)
+def who(v: dict) -> dict:
+    """How the page shows who made a record (an evidence-core view's ``by``): the GitHub login, and
+    the agent if it is one."""
+    return {"by": v["login"], "kind": v["kind"], "agent": evidence_records.agent_label(v["agent"])}
 
 
-def who(by: dict) -> dict:
-    """How the page shows who made a record: the GitHub login, and the agent if it is one."""
-    return {"by": (by.get("identity") or {}).get("id", ""), "kind": by.get("kind", "person"),
-            "agent": evidence_records.agent_label(by.get("agent"))}
-
-
-def issue_url(r: dict) -> tuple:
-    repo, issue = issue_of((r.get("origin") or {}).get("ref", ""))
-    return issue, (f"https://github.com/{repo}/issues/{issue}" if repo and issue else "")
+def issue(v: dict) -> tuple:
+    """(issue number, link) of a record view: the issue it came from, or none."""
+    repo, number = evidence_records.origin_issue(v["url"])
+    return number, v["url"]
 
 
 def marks_from_evidence(index: dict, ev: Evidence) -> dict:
-    """Each declaration's review marks: the acceptances in the store that are neither withdrawn nor
-    superseded, each with the status evidence-core gives it against the pinned commit's dataset:
-    current, renamed (still current: it followed the declaration to its new name), stale underneath
-    (the declaration is written the same, but something it rests on changed), or stale (the
-    declaration changed)."""
+    """Each declaration's review marks: the acceptances in force (neither withdrawn nor superseded),
+    each with the status evidence-core gives it against the pinned commit's dataset: current,
+    renamed (still current: it followed the declaration to its new name), stale underneath (the
+    declaration is written the same, but something it rests on changed), or stale (the declaration
+    changed)."""
     names = {item["name"] for item in index["declarations"]}
     marks = defaultdict(list)
-    for name, rows in ev.by_decl.items():
+    for name in ev.by_decl:
         if name not in names:
             continue
-        for r, s in rows:
-            if r.get("kind") != "review" or r.get("verdict") != "accept":
+        for v in views_on(ev, name, "review"):
+            if v["verdict"] != "accept" or not v["inForce"]:
                 continue
-            if r["id"] in ev.superseded_by or ev.state(r["id"]) == "withdrawn":
-                continue
-            issue, url = issue_url(r)
+            number, url = issue(v)
             marks[name].append({
-                "trailer": "Reviewed-by", **who(r.get("by", {})),
-                "hash": r.get("subject", {}).get("hashes", {}).get("meaning", ""),
-                "current": s.applies, "status": s.state, "at": r.get("at", ""),
-                "evidence": r.get("rationale", ""), "issue": issue, "url": url, "id": r["id"],
-                **({"from": r["subject"]["name"]} if s.state == "renamed" else {})})
+                "trailer": "Reviewed-by", **who(v["by"]), "hash": v["hash"], "current": v["applies"],
+                "status": v["status"], "at": v["at"], "evidence": v["rationale"], "issue": number, "url": url,
+                "id": v["id"], **({"from": v["renamedFrom"]} if v["renamedFrom"] else {})})
     for items in marks.values():
         items.sort(key=lambda m: (not m["current"], m["kind"] == "agent", m["at"]))
     return marks
@@ -119,31 +105,30 @@ def tally(marks: list) -> dict:
     return out
 
 
-def latest(ev: Evidence, rid: str) -> dict:
-    return (ev.statuses.get(rid) or [{}])[-1]
+def closed(v: dict) -> dict:
+    """Who resolved a record and when, from its latest status (for one no longer open)."""
+    if v["state"] in ("open", "stands") or not v["statuses"]:
+        return {}
+    last = v["statuses"][-1]
+    return {"closedBy": last["by"]["login"], "closedAt": last["at"], "commit": last["commit"], "note": last["note"],
+            **({"metBy": (last["test"] or {}).get("name", "")} if isinstance(last.get("test"), dict) else {})}
 
 
 def problems_from_evidence(index: dict, ev: Evidence) -> dict:
-    """Each declaration's problem reports, open ones first, then the newest first."""
+    """Each declaration's problem reports (neither superseded), open ones first, then the newest first."""
     names = {item["name"] for item in index["declarations"]}
     found = defaultdict(list)
-    for name, rows in ev.by_decl.items():
+    for name in ev.by_decl:
         if name not in names:
             continue
-        for r, s in rows:
-            if r.get("kind") != "review" or r.get("verdict") != "problem" or r["id"] in ev.superseded_by:
+        for v in views_on(ev, name, "review"):
+            if v["verdict"] != "problem" or v["supersededBy"]:
                 continue
-            state = ev.state(r["id"])
-            last = latest(ev, r["id"]) if state not in ("open",) else {}
-            issue, url = issue_url(r)
+            number, url = issue(v)
             found[name].append({
-                "id": r["id"], "issue": issue, "url": url, "status": PROBLEM_STATE.get(state, state),
-                "what": (r.get("problem") or {}).get("category", "other"), "why": r.get("rationale", ""),
-                "fix": r.get("fix", ""), **who(r.get("by", {})),
-                "hash": r.get("subject", {}).get("hashes", {}).get("meaning", ""), "current": s.applies,
-                "at": r.get("at", ""),
-                **({"closedBy": who(last.get("by", {}))["by"], "closedAt": last.get("at", ""),
-                    "commit": last.get("commit", ""), "note": last.get("note", "")} if last else {})})
+                "id": v["id"], "issue": number, "url": url, "status": PROBLEM_STATE.get(v["state"], v["state"]),
+                "what": v["category"] or "other", "why": v["rationale"], "fix": v["fix"], **who(v["by"]),
+                "hash": v["hash"], "current": v["applies"], "at": v["at"], **closed(v)})
     for items in found.values():
         items.sort(key=lambda p: p["at"], reverse=True)
         items.sort(key=lambda p: p["status"] != "open")
@@ -174,17 +159,14 @@ def tests_from_evidence(index: dict, ev: Evidence) -> dict:
             r = t["record"] if "challenge" not in t else t["met"]
             entry(name)["results"].append({
                 "test": t["test"], "status": t["result"], "statement": test["source"] if test else "",
-                "url": test["url"] if test else "", "checks": t["checks"], **who(r.get("by", {})),
+                "url": test["url"] if test else "", "checks": t["checks"], **who(by_view(r.get("by", {}))),
                 "at": r.get("at", ""), **({"challenge": t["challenge"]["id"]} if "challenge" in t else {})})
-        for c, state in ev.challenges(name):
-            issue, url = issue_url(c)
-            last = latest(ev, c["id"]) if state != "open" else {}
-            met_by = (last.get("test") or {}).get("name", "") if isinstance(last.get("test"), dict) else ""
+        for v in views_on(ev, name, "challenge"):
+            number, url = issue(v)
             entry(name)["suggested"].append({
-                "id": c["id"], "issue": issue, "url": url, "status": CHALLENGE_STATE.get(state, state),
-                "test": c.get("property", ""), "statement": c.get("statement", ""), "catches": c.get("catches", ""),
-                "modes": c.get("modes", []), **who(c.get("by", {})), "at": c.get("at", ""),
-                **({"closedBy": who(last.get("by", {}))["by"], "closedAt": last.get("at", ""), "metBy": met_by} if last else {})})
+                "id": v["id"], "issue": number, "url": url, "status": CHALLENGE_STATE.get(v["state"], v["state"]),
+                "test": v["property"], "statement": v["statement"], "catches": v["catches"], "modes": v["modes"],
+                **who(v["by"]), "at": v["at"], **closed(v)})
     for tests in out.values():
         tests["tally"] = {"unit": sum(t["passes"] for t in tests["unit"]),
                           "results": sum(r["status"] == "passes" for r in tests["results"]),
@@ -209,8 +191,8 @@ def named_from_evidence(index: dict, ev: Evidence) -> dict:
         people = coverage_of(ev, name, Policy())
         anyone = coverage_of(ev, name, Policy(agents=True))
         out[name] = {"name": first.get("name", ""), "what": first.get("what", "result"), "about": first.get("about", ""),
-                     "sources": [{"source": r.get("source") or {}, "by": who(r.get("by", {}))["by"],
-                                  "agent": who(r.get("by", {}))["agent"], "at": r.get("at", "")} for r in records],
+                     "sources": [{"source": r.get("source") or {}, **{k: who(by_view(r.get("by", {})))[k] for k in ("by", "agent")},
+                                  "at": r.get("at", "")} for r in records],
                      "coverage": {"members": len(people.members), "people": len(people.covered),
                                   "any": len(anyone.covered), "problems": len(people.with_problems),
                                   "upstream": len(people.upstream)}}
@@ -397,10 +379,10 @@ function formLink(template, title, name) {
   const q = new URLSearchParams({template, title: title + name, decl: name, commit: SETTINGS.tauceti});
   return 'https://github.com/' + SETTINGS.repo + '/issues/new?' + q.toString();
 }
-const reviewLink = name => formLink('evidence-review.yml', 'Review: ', name);
-const suggestLink = name => formLink('evidence-challenge.yml', 'Challenge: ', name);
-const problemLink = name => formLink('evidence-problem.yml', 'Problem: ', name);
-const testLink = name => formLink('evidence-test.yml', 'Test: ', name);
+const reviewLink = name => formLink(SETTINGS.forms.review, 'Review: ', name);
+const suggestLink = name => formLink(SETTINGS.forms.challenge, 'Challenge: ', name);
+const problemLink = name => formLink(SETTINGS.forms.problem, 'Problem: ', name);
+const testLink = name => formLink(SETTINGS.forms.test, 'Test: ', name);
 const issueUrl = n => 'https://github.com/' + SETTINGS.repo + '/issues/' + n;
 
 function readHash() {
@@ -704,7 +686,9 @@ def page(index: dict, settings: dict, reviews: dict, named_decls: dict) -> str:
     entries = reviews["declarations"].values()
     marks = sum(len(e["marks"]) for e in entries)
     open_problems = sum(p["status"] == "open" for e in entries for p in e["problems"])
-    config = json.dumps({"repo": settings["repo"], "bulk_issue": settings["bulk_issue"], "count": total, "tauceti": index["tauceti"]})
+    config = json.dumps({"repo": settings["repo"], "bulk_issue": settings["bulk_issue"], "count": total, "tauceti": index["tauceti"],
+                         # evidence-store's issue forms, which the buttons open
+                         "forms": {kind: form["file"] for kind, form in FORMS.items()}})
     config = config.replace("<", "\\u003c")
     bulk = f"https://github.com/{settings['repo']}/issues/{settings['bulk_issue']}"
     legend = "".join(f"<dt>{t}</dt><dd>{m}</dd>" for t, m in MEANING.items())

@@ -34,15 +34,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: The toolchains trust-extract has a release for
+        id: extractor
+        uses: LeanTrustBuilders/extractor/setup@main
+        with:
+          toolchain: ''
       - name: Pin Tau Ceti's current main
         id: pin
+        env:
+          SUPPORTED: ${{ steps.extractor.outputs.toolchains }}
         run: |
           # The newest commit of main (among the last 30) that the pilot can extract a dataset of
           # cheaply: LeanTrustBuilders/extractor has a release for its toolchain, and Tau Ceti's
           # cache has published its build (its revision map). When main has moved to a toolchain
           # with no extractor release yet, the pin waits on the last commit before the move.
-          supported=$(gh release list -R LeanTrustBuilders/extractor --limit 100 --json tagName \
-            --jq '.[].tagName | sub("^v[0-9.]+-lean-"; "") | ltrimstr("v")')
+          supported=$(tr ' ' '\n' <<< "$SUPPORTED")
           latest=""
           for sha in $(gh api "repos/TauCetiProject/TauCeti/commits?sha=main&per_page=30" --jq '.[].sha'); do
             toolchain=$(gh api "repos/TauCetiProject/TauCeti/contents/lean-toolchain?ref=$sha" --jq .content | base64 -d | tr -d '[:space:]')

@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_site import data, issue_of, named, page, search_index, shards, summary  # noqa: E402
+from build_site import data, named, page, search_index, shards, summary  # noqa: E402
 from evidence_core import Evidence  # noqa: E402
 from evidence_core import records as rec  # noqa: E402
 import mini  # noqa: E402
@@ -107,8 +107,9 @@ class Page(unittest.TestCase):
 
     def test_the_page_opens_the_evidence_forms_filled_in(self):
         html = page(INDEX, SETTINGS, data(INDEX, self.ev), named(INDEX, self.ev)["declarations"])
-        for template in ("evidence-review.yml", "evidence-challenge.yml", "evidence-problem.yml", "evidence-test.yml"):
-            self.assertIn(f"'{template}'", html)
+        # The forms are evidence-store's.
+        for kind in ("review", "challenge", "problem", "test"):
+            self.assertIn(f'"{kind}": "evidence-{kind}.yml"', html)
         self.assertIn("decl: name, commit: SETTINGS.tauceti", html)
         self.assertIn("4 declarations in 2 modules · 1 named · 3 reviews · 1 open problem", html)
         self.assertIn('"repo": "LeanTrustBuilders/reviewed-by-pilot"', html)
@@ -116,14 +117,6 @@ class Page(unittest.TestCase):
     def test_settings_cannot_close_the_script(self):
         html = page(INDEX, dict(SETTINGS, repo="</script><script>alert(1)</script>"), {"declarations": {}}, {})
         self.assertNotIn("</script><script>alert(1)", html)
-
-
-class Origins(unittest.TestCase):
-    def test_the_issue_of_a_record_is_read_from_its_origin(self):
-        self.assertEqual(issue_of("o/r#12"), ("o/r", 12))
-        self.assertEqual(issue_of("o/r#12/event/5"), ("o/r", 12))
-        self.assertEqual(issue_of("https://github.com/o/r/issues/7#issuecomment-99/line/2"), ("o/r", 7))
-        self.assertEqual(issue_of(""), ("", None))
 
 
 class Index(unittest.TestCase):

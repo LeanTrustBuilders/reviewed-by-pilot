@@ -1,28 +1,61 @@
-"""Reading the declarations from a dataset (scripts/dataset_declarations.py)."""
+"""Reading the declarations the page lists from a dataset and a checkout (scripts/dataset_declarations.py),
+through evidence-core's source reader."""
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from dataset_declarations import after_docstring  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dataset_declarations import read  # noqa: E402
+from evidence_core import Dataset  # noqa: E402
+import mini  # noqa: E402
 
-SOURCE = """/-- The **ideal von Mangoldt function**, with `f := g` in its text
-and a nested /- comment -/. -/
+X = """namespace TauCeti.X
 
+/-- The **function** `f`, with `a := b` in its docstring. -/
 @[simp]
-noncomputable def vonMangoldt : ℕ → ℂ := fun _ ↦ 0
-/-- A doc comment, then code on the same line. -/ def one : ℕ := 1
-def two : ℕ := 2""".splitlines()
+abbrev f : Nat := 1
+
+/-- It is one. -/
+theorem f_one : f = 1 := by
+  rfl
+
+end TauCeti.X
+"""
+ROWS = [("TauCeti.X.f", "TauCeti/NumberTheory/X.lean", (3, 0), (5, 19), "abbrev"),
+        ("TauCeti.X.f_one", "TauCeti/NumberTheory/X.lean", (7, 0), (9, 5), "theorem")]
 
 
-class Source(unittest.TestCase):
-    def test_a_declaration_is_shown_from_below_its_doc_comment(self):
-        self.assertEqual(after_docstring(SOURCE, 1, 5), 4)
-        self.assertEqual(SOURCE[4 - 1], "@[simp]")
+class Read(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        mini.dataset(root / "ds")
+        (root / "ds" / "facets" / "source.jsonl").write_text("".join(
+            json.dumps({"decl": n, "path": p, "start": list(s), "end": list(e), "keyword": k}) + "\n" for n, p, s, e, k in ROWS))
+        meta = json.loads((root / "ds" / "meta.json").read_text())
+        meta["facets"].append({"name": "source", "file": "facets/source.jsonl", "schema": "source/1", "count": len(ROWS)})
+        (root / "ds" / "meta.json").write_text(json.dumps(meta))
+        (root / "src" / "TauCeti" / "NumberTheory").mkdir(parents=True)
+        (root / "src" / "TauCeti" / "NumberTheory" / "X.lean").write_text(X)
+        self.found = {d["name"]: d for d in read(Dataset.load(root / "ds"), root / "src", mini.COMMIT)["declarations"]}
 
-    def test_a_declaration_without_doc_comment_or_sharing_its_line_is_kept_whole(self):
-        self.assertEqual(after_docstring(SOURCE, 7, 7), 7)
-        self.assertEqual(after_docstring(SOURCE, 6, 6), 6)
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_only_declarations_with_a_source_range_are_listed(self):
+        self.assertEqual(sorted(self.found), ["TauCeti.X.f", "TauCeti.X.f_one"])
+
+    def test_a_definition_is_shown_whole_below_its_doc_comment(self):
+        f = self.found["TauCeti.X.f"]
+        self.assertEqual((f["source"], f["line"], f["end"], f["keyword"], f["kind"]),
+                         ("@[simp]\nabbrev f : Nat := 1", 4, 5, "abbrev", "def"))
+        self.assertTrue(f["url"].endswith("#L4-L5"))
+
+    def test_a_theorem_is_shown_by_its_statement(self):
+        self.assertEqual(self.found["TauCeti.X.f_one"]["source"], "theorem f_one : f = 1")
 
 
 if __name__ == "__main__":

@@ -5,9 +5,9 @@ name: Dataset
 #
 # Tau Ceti's modules come from its public Lake cache and Mathlib's from Mathlib's, so little is
 # compiled: only what the cache lacks. A module that does not build is left out, and the dataset
-# says so (library.unavailable). trust-extract is the newest release of LeanTrustBuilders/extractor
-# for Tau Ceti's toolchain; its examples.py adds the `examples` facet (the unit tests the page
-# shows), read from the sources.
+# says so (library.unavailable). The extractor's action does the rest: the newest trust-extract
+# release for Tau Ceti's toolchain, the `examples` facet (the unit tests the page shows, read from
+# the sources), and the release.
 on:
   workflow_dispatch:
     inputs:
@@ -61,9 +61,6 @@ jobs:
         if: steps.published.outputs.done != 'true'
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          # Every imported module maps several files: allow more mappings per process, so that the
-          # extraction needs fewer parts.
-          sudo sysctl -w vm.max_map_count=262144
           df -h / | tail -1
       - name: Check out Tau Ceti
         if: steps.published.outputs.done != 'true'
@@ -92,43 +89,18 @@ jobs:
           if [ -s "$RUNNER_TEMP/unbuilt.txt" ]; then
             echo "::warning::$(wc -l < "$RUNNER_TEMP/unbuilt.txt") modules do not build at $COMMIT and are left out: $(paste -sd' ' "$RUNNER_TEMP/unbuilt.txt")"
           fi
-      - name: trust-extract for Tau Ceti's toolchain
+      - name: Extract and publish
         if: steps.published.outputs.done != 'true'
-        run: |
-          toolchain=$(sed 's/.*:v//' "$RUNNER_TEMP/TauCeti/lean-toolchain")
-          # The newest release for this toolchain: tagged v<version>-lean-v<toolchain> (the first
-          # one was tagged v<toolchain>).
-          tag=$(gh release list -R LeanTrustBuilders/extractor --limit 100 --json tagName,createdAt \
-            --jq "[.[] | select(.tagName == \"v$toolchain\" or (.tagName | endswith(\"-lean-v$toolchain\")))] | sort_by(.createdAt) | last | .tagName // empty")
-          if [ -z "$tag" ] || ! gh release download "$tag" -R LeanTrustBuilders/extractor -p 'trust-extract-linux-x86_64.tar.gz' -D "$RUNNER_TEMP"; then
-            echo "::error::LeanTrustBuilders/extractor has no release for Lean v$toolchain yet"; exit 1
-          fi
-          echo "trust-extract release $tag"
-          tar -xzf "$RUNNER_TEMP/trust-extract-linux-x86_64.tar.gz" -C "$RUNNER_TEMP"
-          "$RUNNER_TEMP/trust-extract/trust-extract" version
-      - name: Extract
-        if: steps.published.outputs.done != 'true'
-        working-directory: ${{ runner.temp }}/TauCeti
-        run: |
-          lake env "$RUNNER_TEMP/trust-extract/trust-extract" extract --root TauCeti \
-            --repo TauCetiProject/TauCeti --out "$RUNNER_TEMP/dataset" --parts 8 --jobs 1 \
-            --skip-modules-file "$RUNNER_TEMP/unbuilt.txt" \
-            --no-statements --no-signatures --no-upstream-docs
-          # This page shows neither statements taken apart nor hovers: the three flags keep the
+        uses: LeanTrustBuilders/extractor/extract@main
+        with:
+          root: TauCeti
+          repo: TauCetiProject/TauCeti
+          directory: ${{ runner.temp }}/TauCeti
+          # This page shows neither statements taken apart nor hovers: the three --no flags keep the
           # dataset at the size it had before trust-extract 0.4 (Tau Ceti's would otherwise double).
-          python3 "$RUNNER_TEMP/trust-extract/examples.py" --dataset "$RUNNER_TEMP/dataset" --source "$RUNNER_TEMP/TauCeti"
-          du -sh "$RUNNER_TEMP/dataset"
-      - name: Publish
-        if: steps.published.outputs.done != 'true'
-        run: |
-          tar -czf "$RUNNER_TEMP/dataset.tar.gz" -C "$RUNNER_TEMP/dataset" .
-          version=$("$RUNNER_TEMP/trust-extract/trust-extract" version | head -1)
-          spec=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['spec'])" "$RUNNER_TEMP/dataset/meta.json")
-          notes="Extracted by $version from TauCetiProject/TauCeti@$COMMIT, with the examples facet. Spec: $spec (LeanTrustBuilders/specs)."
-          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$RUNNER_TEMP/dataset.tar.gz" -R "$GITHUB_REPOSITORY" --clobber
-            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes "$notes"
-          else
-            gh release create "$TAG" "$RUNNER_TEMP/dataset.tar.gz" -R "$GITHUB_REPOSITORY" --latest=false \
-              --title "Dataset for Tau Ceti ${COMMIT:0:12}" --notes "$notes"
-          fi
+          args: >-
+            --parts 8 --jobs 1 --skip-modules-file ${{ runner.temp }}/unbuilt.txt
+            --no-statements --no-signatures --no-upstream-docs
+          publish: ${{ env.TAG }}
+          replace: ${{ inputs.replace || 'false' }}
+          title: Dataset for Tau Ceti ${{ env.COMMIT }}

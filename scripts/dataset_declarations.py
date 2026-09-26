@@ -6,12 +6,14 @@
 Writes data/declarations.json, which the page is built from:
 
 - the declarations are the dataset's project nodes: every declaration a person wrote, as the
-  compiled library has it, with its kind, module and source range (the checkout gives the text).
+  compiled library has it, with its kind, module and source range; evidence-core reads its text
+  from the checkout (without the doc comment, which the page shows apart; a theorem up to its
+  proof).
   Private theorems are left out: they are steps of proofs, and no meaning rests on a proof. Private
   definitions stay, under their private names: the meaning of public ones can rest on them;
 - `hash` is the declaration's **meaning hash** (S1), which a review is keyed by: it stays current
-  until the meaning of the declaration or of anything it rests on changes. `legacy` is the meaning
-  hash of datasets before `ltb-dataset/1`, which older reviews hold;
+  until the meaning of the declaration or of anything it rests on changes (the page shows it as the
+  version; whether a review still applies is evidence-core's to say);
 - the modules, with their docstrings, are the dataset's (`modules.jsonl`);
 - the `example`s that serve as unit tests are the dataset's `examples` facet, which the extractor's
   `scripts/examples.py` adds from the sources (an `example` is not kept in the compiled library).
@@ -19,7 +21,6 @@ Writes data/declarations.json, which the page is built from:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import subprocess
 import sys
@@ -27,10 +28,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    from evidence_core import Dataset
+    import evidence_core  # noqa: F401
 except ImportError:  # a checkout of evidence-core next to this repository
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evidence-core"))
-    from evidence_core import Dataset
+from evidence_core import Dataset
+from evidence_core.source import Sources, split_statement
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = "TauCetiProject/TauCeti"
@@ -39,86 +41,26 @@ KIND = {"theorem": "theorem", "definition": "def", "instance": "instance", "clas
         "structure": "structure", "inductive": "inductive", "axiom": "def", "opaque": "def"}
 
 
-def fingerprint(text: str) -> str:
-    return hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()[:12]
-
-
-def statement(text: str) -> str:
-    """A theorem up to its proof: up to the first `:=` outside brackets, so that a named argument
-    such as `(K := K)` stays in the statement."""
-    depth = 0
-    for k, char in enumerate(text):
-        if char in "([{⟨⦃":
-            depth += 1
-        elif char in ")]}⟩⦄":
-            depth = max(depth - 1, 0)
-        elif depth == 0 and text.startswith(":=", k):
-            return text[:k].rstrip()
-    return text.rstrip()
-
-
-def after_docstring(lines: list[str], start: int, end: int) -> int:
-    """The line a declaration starts on, below its doc comment: the dataset's source range starts at
-    the doc comment, which the page shows apart. Lines are numbered from 1; a doc comment followed by
-    code on its last line is kept."""
-    i = start - 1
-    if i >= len(lines) or not lines[i].lstrip().startswith("/--"):
-        return start
-    depth = 0
-    for j in range(i, min(end, len(lines))):
-        line, k = lines[j], 0
-        while k < len(line):
-            if line.startswith("/-", k):
-                depth, k = depth + 1, k + 2
-            elif line.startswith("-/", k):
-                depth, k = depth - 1, k + 2
-                if depth == 0:
-                    if line[k:].strip():
-                        return start
-                    j += 1
-                    while j < end - 1 and not lines[j].strip():
-                        j += 1
-                    return j + 1 if j < end else start
-            else:
-                k += 1
-    return start
-
-
 def read(dataset: Dataset, clone: Path, commit: str) -> dict:
-    lines_of: dict[str, list[str]] = {}
-
-    def lines(path: str) -> list[str]:
-        if path not in lines_of:
-            p = clone / path
-            lines_of[path] = p.read_text(encoding="utf-8", errors="replace").splitlines() if p.exists() else []
-        return lines_of[path]
-
+    sources = Sources(clone)
     found = []
     for d in dataset.decls:
         if not d.is_project or (d.name.startswith("_private.") and d.kind == "theorem"):
             continue
         src = dataset.facet_row("source", d.name)
-        if src is None:
+        span = sources.span(src, doc_comment=False) if src else None
+        if span is None:
             continue
-        path, (start, _), (end, _) = src["path"], src["start"], src["end"]
-        start = after_docstring(lines(path), start, end)
-        text = "\n".join(lines(path)[start - 1:end])
+        start, end, text = span
         kind = KIND.get(d.kind, "def")
         keyword = src.get("keyword") or ("theorem" if kind == "theorem" else "def")
         if keyword == "lemma":
             kind = "theorem"
-        shown = statement(text) if kind == "theorem" else text
         doc = (dataset.facet_row("docstring", d.name) or {}).get("text", "")
-        axioms = dataset.facet_row("axioms", d.name) or {}
         found.append({
-            "name": d.name, "kind": kind, "keyword": keyword, "module": d.module, "path": path,
-            "line": start, "end": end, "doc": doc, "source": shown,
-            "hash": d.meaning or fingerprint(shown), "local": d.local, "content": d.content,
-            # ltb-dataset/1: the meaning hash of ltb-dataset/0, which marks made before hold.
-            "legacy": d.legacy_meaning,
-            "text_hash": fingerprint(shown), "package": d.package,
-            "sorry": bool(axioms.get("sorry", False)),
-            "url": f"https://github.com/{UPSTREAM}/blob/{commit}/{path}#L{start}-L{end}"})
+            "name": d.name, "kind": kind, "keyword": keyword, "module": d.module, "path": src["path"],
+            "line": start, "end": end, "doc": doc, "source": split_statement(text)[0] if kind == "theorem" else text,
+            "hash": d.meaning, "url": f"https://github.com/{UPSTREAM}/blob/{commit}/{src['path']}#L{start}-L{end}"})
     # Modules, from the dataset; examples, from its `examples` facet.
     count = {}
     for item in found:

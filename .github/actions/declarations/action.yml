@@ -22,21 +22,19 @@ runs:
         git init -q "$RUNNER_TEMP/TauCeti"
         git -C "$RUNNER_TEMP/TauCeti" fetch -q --depth 1 https://github.com/TauCetiProject/TauCeti.git "$commit"
         git -C "$RUNNER_TEMP/TauCeti" checkout -q FETCH_HEAD
-    - name: evidence-core
+    - name: evidence-store and evidence-core
       shell: bash
-      run: pip install --quiet "git+https://github.com/LeanTrustBuilders/evidence-core@main"
+      run: pip install --quiet "git+https://github.com/LeanTrustBuilders/evidence-store@main"
     - name: Declarations, from the dataset
       id: dataset
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
       run: |
-        tag="dataset-${TAUCETI_COMMIT:0:12}"
-        if ! gh release download "$tag" -R "$GITHUB_REPOSITORY" -p dataset.tar.gz -D "$RUNNER_TEMP" --clobber; then
-          echo "::error::No dataset published for Tau Ceti $TAUCETI_COMMIT (release $tag): run the Dataset workflow"
+        # Where the store's config says datasets are (evidence/store.json): this repository's releases.
+        if ! evidence-store dataset --commit "$TAUCETI_COMMIT" --out "$RUNNER_TEMP/dataset" > /dev/null; then
+          echo "::error::No dataset published for Tau Ceti $TAUCETI_COMMIT: run the Dataset workflow"
           exit 1
         fi
-        mkdir -p "$RUNNER_TEMP/dataset"
-        tar -xzf "$RUNNER_TEMP/dataset.tar.gz" -C "$RUNNER_TEMP/dataset"
         echo "path=$RUNNER_TEMP/dataset" >> "$GITHUB_OUTPUT"
         python3 scripts/dataset_declarations.py --dataset "$RUNNER_TEMP/dataset" --clone "$RUNNER_TEMP/TauCeti" --commit "$TAUCETI_COMMIT"
