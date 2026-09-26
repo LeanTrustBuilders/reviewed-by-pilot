@@ -1,0 +1,14 @@
+{
+ "spec": "ltb-evidence-store/0",
+ "library": {
+  "repo": "TauCetiProject/TauCeti",
+  "root": "TauCeti"
+ },
+ "datasets": {
+  "repo": "LeanTrustBuilders/reviewed-by-pilot",
+  "tag": "dataset-{commit12}",
+  "asset": "dataset.tar.gz"
+ },
+ "claims": [],
+ "maintainers": []
+}

@@ -37,10 +37,12 @@ from named import named_by_declaration  # noqa: E402
 try:
     from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
     from evidence_core import records as evidence_records
+    from evidence_core.store import Store
 except ImportError:  # a checkout of evidence-core next to this repository
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evidence-core"))
     from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
     from evidence_core import records as evidence_records
+    from evidence_core.store import Store
 from reviews import load, reports, tally, tests_by_declaration  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -682,7 +684,7 @@ def page(index: dict, records: list, settings: dict, problems: list = (), named_
   <aside class="panel" id="panel" aria-live="polite"></aside>
 </div>
 <footer>
-  <p>The marks as data, for the atlas or Tau Ceti's own documentation: <a href="reviews.json">reviews.json</a>. The evidence records (S3): <a href="https://github.com/{repo}/blob/main/reviews/evidence.jsonl">reviews/evidence.jsonl</a>. Declarations and hashes come from a dataset extracted from the compiled library by <a href="https://github.com/LeanTrustBuilders/extractor">trust-extract</a>; statuses and coverage are computed by <a href="https://github.com/LeanTrustBuilders/evidence-core">evidence-core</a>. The pilot of the <a href="https://github.com/LeanTrustBuilders">LeanTrustBuilders</a> suite, in <a href="https://github.com/{repo}">{repo}</a>; nothing here changes Tau Ceti.{missing}</p>
+  <p>The marks as data, for the atlas or Tau Ceti's own documentation: <a href="reviews.json">reviews.json</a>. The evidence records (S3): the store <a href="https://github.com/{repo}/tree/main/evidence">evidence/</a>. Declarations and hashes come from a dataset extracted from the compiled library by <a href="https://github.com/LeanTrustBuilders/extractor">trust-extract</a>; statuses and coverage are computed by <a href="https://github.com/LeanTrustBuilders/evidence-core">evidence-core</a>. The pilot of the <a href="https://github.com/LeanTrustBuilders">LeanTrustBuilders</a> suite, in <a href="https://github.com/{repo}">{repo}</a>; nothing here changes Tau Ceti.{missing}</p>
 </footer>
 <script type="application/json" id="settings">{config}</script>
 <script>{SCRIPT}</script>
@@ -706,7 +708,7 @@ def main() -> int:
     listed, suggestions = load(ROOT / "reviews" / "tests.jsonl"), load(ROOT / "reviews" / "suggestions.jsonl")
     ev = marks = None
     if args.dataset:
-        ev = Evidence.resolve(evidence_records.load(ROOT / "reviews" / "evidence.jsonl"), Dataset.load(args.dataset))
+        ev = Evidence.resolve(Store.load(ROOT / "evidence").records, Dataset.load(args.dataset))
         marks = marks_from_evidence(index, ev)
     out = ROOT / "site"
     if (out / "data").exists():

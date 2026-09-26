@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep reviews/evidence.jsonl (S3 evidence records) in step with the ledgers.
+"""Keep the evidence store evidence/ (S3 evidence records) in step with the ledgers.
 
   python3 scripts/evidence_sync.py --dataset DIR [--at COMMIT=DIR ...]
 
@@ -24,15 +24,26 @@ try:
     from evidence_core import Dataset, with_id
     from evidence_core import migrate as mig
     from evidence_core import records as rec
+    from evidence_core import store as sto
 except ImportError:  # a checkout of evidence-core next to this repository
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evidence-core"))
     from evidence_core import Dataset, with_id
     from evidence_core import migrate as mig
     from evidence_core import records as rec
+    from evidence_core import store as sto
 
 ROOT = Path(__file__).resolve().parents[1]
 REVIEWS = ROOT / "reviews"
-EVIDENCE = REVIEWS / "evidence.jsonl"
+#: The evidence store (S3, "Evidence stores"): store.json and records/*.jsonl.
+STORE = ROOT / "evidence"
+
+
+def open_store(path: Path) -> "sto.Store":
+    """The store at ``path``, created if it is not there yet."""
+    if (path / sto.CONFIG).exists():
+        return sto.Store.load(path)
+    config = sto.default_config("TauCetiProject/TauCeti", "TauCeti", "LeanTrustBuilders/reviewed-by-pilot")
+    return sto.Store.init(path, config)
 
 
 def load(path: Path) -> list[dict]:
@@ -53,13 +64,14 @@ def keyed(record: dict, k: str) -> dict:
     return with_id(record)
 
 
-def sync(pinned: Dataset, at: dict[str, Dataset], repo: str, evidence_path: Path = EVIDENCE,
+def sync(pinned: Dataset, at: dict[str, Dataset], repo: str, store_path: Path = STORE,
          inherited: dict | None = None) -> list[dict]:
     """Converts the ledger entries that have no S3 record yet; returns the new records.
 
     `inherited` ({"repo", "until"}) names the repository whose issues the entries made before
     `until` came from, for a ledger carried over from another repository."""
-    existing = load(evidence_path)
+    store = open_store(store_path)
+    existing = store.records
     done = {r.get("migration", {}).get("key") for r in existing}
     new: list[dict] = []
     datasets = dict(at)
@@ -109,9 +121,7 @@ def sync(pinned: Dataset, at: dict[str, Dataset], repo: str, evidence_path: Path
                               "by": {"kind": "person", "identity": {"kind": "github", "id": entry.get("by", "")},
                                      "involvement": "unknown"},
                               "origin": {"kind": "issue", "ref": ref}}, key(entry)))
-    if new:
-        rec.append(evidence_path, new)
-    return new
+    return store.add(new)
 
 
 def main() -> int:
@@ -126,7 +136,7 @@ def main() -> int:
         commit, _, path = spec.partition("=")
         at[commit] = Dataset.load(path)
     new = sync(pinned, at, settings["repo"], inherited=settings.get("inherited_ledger"))
-    print(f"{len(new)} new evidence records in {EVIDENCE.relative_to(ROOT)}")
+    print(f"{len(new)} new evidence records in {STORE.relative_to(ROOT)}")
     return 0
 
 

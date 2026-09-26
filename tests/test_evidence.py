@@ -71,11 +71,17 @@ class EvidenceTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def sync(self):
-        return evidence_sync.sync(self.a, {"A": self.a}, "owner/pilot", self.reviews / "evidence.jsonl",
+        return evidence_sync.sync(self.a, {"A": self.a}, "owner/pilot", self.reviews.parent / "evidence",
                                   inherited={"repo": "owner/original", "until": "2026-09-25T16:00:00Z"})
+
+    def records(self):
+        from evidence_core.store import Store
+        return Store.load(self.reviews.parent / "evidence").records
 
     def test_sync_is_idempotent_and_keyed_by_the_dataset(self):
         new = self.sync()
+        # Written by a person, under their GitHub account; the store checks every record.
+        self.assertEqual(new[0]["by"]["identity"], {"kind": "github", "id": "someone"})
         self.assertEqual(len(new), 1)
         subject = new[0]["subject"]
         self.assertEqual((subject["name"], subject["commit"], subject["hashes"]["meaning"]), ("T.foo", "A", "b" * 16))
@@ -91,7 +97,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_marks_carry_their_status(self):
         self.sync()
-        records = [json.loads(line) for line in (self.reviews / "evidence.jsonl").read_text().splitlines()]
+        records = self.records()
         now = build_site.marks_from_evidence(self.index, Evidence.resolve(records, self.a))
         self.assertEqual([(m["status"], m["current"]) for m in now["T.foo"]], [("current", True)])
         later = build_site.marks_from_evidence(self.index, Evidence.resolve(records, self.b))
@@ -100,7 +106,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_named_coverage(self):
         self.sync()
-        records = [json.loads(line) for line in (self.reviews / "evidence.jsonl").read_text().splitlines()]
+        records = self.records()
         named = {"T.claim": {"name": "The claim", "what": "result", "about": "", "sources": []}}
         build_site.named_coverage(named, Evidence.resolve(records, self.a))
         self.assertEqual(named["T.claim"]["coverage"], {"members": 3, "people": 1, "any": 1, "problems": 0, "upstream": 0})
