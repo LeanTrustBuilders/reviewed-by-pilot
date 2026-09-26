@@ -6,7 +6,9 @@
 Writes data/declarations.json, which the page is built from:
 
 - the declarations are the dataset's project nodes: every declaration a person wrote, as the
-  compiled library has it, with its kind, module and source range (the checkout gives the text);
+  compiled library has it, with its kind, module and source range (the checkout gives the text).
+  Private theorems are left out: they are steps of proofs, and no meaning rests on a proof. Private
+  definitions stay, under their private names: the meaning of public ones can rest on them;
 - `hash` is the declaration's **meaning hash** (S1), which a review is keyed by: it stays current
   until the meaning of the declaration or of anything it rests on changes. `legacy` is the meaning
   hash of datasets before `ltb-dataset/1`, which older reviews hold;
@@ -93,7 +95,7 @@ def read(dataset: Dataset, clone: Path, commit: str) -> dict:
 
     found = []
     for d in dataset.decls:
-        if not d.is_project:
+        if not d.is_project or (d.name.startswith("_private.") and d.kind == "theorem"):
             continue
         src = dataset.facet_row("source", d.name)
         if src is None:
