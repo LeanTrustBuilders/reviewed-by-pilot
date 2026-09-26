@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
-"""Build the search page of Tau Ceti declarations and their review marks.
+"""Build the page of Tau Ceti declarations and what is known of each: reviews, tests, problems.
 
-  python3 scripts/build_site.py
+  python3 scripts/build_site.py --dataset DIR
 
-Reads data/declarations.json (every declaration and example of Tau Ceti at the
-pinned commit, written by fetch_declarations.py), the ledgers in reviews/ (the
-marks, listed tests, suggested tests and problem reports) and
-data/settings.json, and writes site/:
+The page (Reviewed-by's, kept as it was) is fed by the LeanTrustBuilders suite:
 
-- index.html, the page: search every declaration by name or docstring, filter
-  the named results and definitions, definitions from theorems and lemmas, by
-  area and by review, and open one to read it and review it;
-- data/search.json, one row per declaration (name, keyword, module, line),
-  which the page loads first; data/docs.json, each declaration's docstring in
-  one sentence, which it loads next;
+- the declarations and their hashes come from the dataset (S2) of the pinned commit, read into
+  data/declarations.json by dataset_declarations.py;
+- everything people and AI agents said about them is in the evidence store evidence/ (S3), which
+  evidence-store's intake fills from the repository's issues and comments;
+- what applies now (a review current or on an earlier version, a problem open or fixed, a test
+  passing, a challenge met) is computed by evidence-core against the dataset.
+
+It writes site/:
+
+- index.html, the page: search every declaration by name or docstring, filter the named results and
+  definitions, definitions from theorems and lemmas, by area and by review, and open one to read it
+  and review it;
+- data/search.json, one row per declaration (name, keyword, module, line), which the page loads
+  first; data/docs.json, each declaration's docstring in one sentence, which it loads next;
 - data/m/<n>.json, each module's declarations in full, read when one is opened;
-- reviews.json, the marks and problem reports, for other readers too (the
-  atlas, Tau Ceti's docs): each declaration's current version, how many people
-  and AI agents gave each mark, every mark on it, the tests it passes and every
-  report of a problem with it.
+- reviews.json, for other readers too (the atlas, Tau Ceti's docs): each declaration's current
+  version, how many people and AI agents reviewed it, every review, the tests it passes, the tests
+  proposed for it, and every problem reported with it;
+- named.json, the named results and notable definitions, with the coverage of what they rest on.
 """
 from __future__ import annotations
 
@@ -30,10 +35,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlencode
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from named import named_by_declaration  # noqa: E402
 try:
     from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
     from evidence_core import records as evidence_records
@@ -43,78 +45,44 @@ except ImportError:  # a checkout of evidence-core next to this repository
     from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
     from evidence_core import records as evidence_records
     from evidence_core.store import Store
-from reviews import load, reports, tally, tests_by_declaration  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 MEANING = {"Reviewed-by": "it is the intended mathematical notion"}
 DEFINITIONS = {"def", "structure", "class", "inductive", "instance"}
-# What reviews.json says about each problem report.
-PROBLEM_KEYS = ("issue", "status", "what", "why", "fix", "by", "kind", "agent", "hash", "current", "at", "closedBy", "closedAt")
-
-
-def review_link(repo: str, item: dict) -> str:
-    query = urlencode({"template": "reviewed-by.yml", "title": f"Review: {item['name']}", "declaration": item["name"], "version": item["hash"]})
-    return f"https://github.com/{repo}/issues/new?{query}"
-
-
-def module_link(repo: str, module: dict, site: str) -> str:
-    """A file's own page: what the line at the top of its module docstring points to."""
-    return f"{site}#m={module['module']}"
-
-
-def suggest_link(repo: str, item: dict) -> str:
-    query = urlencode({"template": "test.yml", "title": f"Test: {item['name']}", "declaration": item["name"], "version": item["hash"]})
-    return f"https://github.com/{repo}/issues/new?{query}"
-
-
-def problem_link(repo: str, item: dict) -> str:
-    query = urlencode({"template": "problem.yml", "title": f"Problem: {item['name']}", "declaration": item["name"], "version": item["hash"]})
-    return f"https://github.com/{repo}/issues/new?{query}"
-
-
-def current_hashes(index: dict) -> dict:
-    """Each declaration's current versions: its meaning hash and, from a dataset of ltb-dataset/1,
-    the meaning hash of ltb-dataset/0 it also carries (`legacy`). A mark or report made before the
-    datasets' hash changed holds the old kind, and is compared with it."""
-    return {item["name"]: {h for h in (item["hash"], item.get("legacy")) if h} for item in index["declarations"]}
-
-
-def problems_by_declaration(index: dict, events: list) -> dict:
-    """Each declaration's problem reports, open ones first, then the newest first."""
-    current = current_hashes(index)
-    found = defaultdict(list)
-    for report in reports(events).values():
-        if report["decl"] in current:
-            found[report["decl"]].append({**report, "current": report["hash"] in current[report["decl"]]})
-    for items in found.values():
-        items.sort(key=lambda p: p["at"], reverse=True)
-        items.sort(key=lambda p: p["status"] != "open")
-    return found
-
-
-def marks_by_declaration(index: dict, records: list) -> dict:
-    current = current_hashes(index)
-    marks = defaultdict(list)
-    for record in records:
-        if record["decl"] in current and record["trailer"] in MEANING:
-            marks[record["decl"]].append({**record, "current": record["hash"] in current[record["decl"]]})
-    for items in marks.values():
-        items.sort(key=lambda m: (not m["current"], list(MEANING).index(m["trailer"]), m["kind"] == "agent", m["at"]))
-    return marks
+# The state of a problem, as the page shows it: open, or how it was resolved (S3 statuses).
+PROBLEM_STATE = {"open": "open", "fixed": "fixed", "intended": "intended", "invalid": "invalid", "withdrawn": "withdrawn"}
+# The state of a proposed test (an S3 challenge).
+CHALLENGE_STATE = {"open": "open", "met": "written", "failed": "failed", "declined": "not planned", "withdrawn": "withdrawn"}
 
 
 def issue_of(ref: str) -> tuple:
-    """(repository, issue number) of an origin reference like `owner/repo#12` or `owner/repo#12 comment 34`."""
-    repo, _, rest = ref.partition("#")
-    number = rest.split()[0] if rest else ""
-    return (repo, int(number)) if number.isdigit() else (repo, None)
+    """(repository, issue number) of an origin reference like `owner/repo#12`, `owner/repo#12/event/5`
+    or a comment's URL."""
+    m = re.search(r"github\.com/([^/]+/[^/]+)/issues/(\d+)", ref or "")
+    if m:
+        return m.group(1), int(m.group(2))
+    repo, _, rest = (ref or "").partition("#")
+    number = re.match(r"\d+", rest)
+    return (repo, int(number.group(0))) if number else (repo, None)
 
 
-def marks_from_evidence(index: dict, ev) -> dict:
-    """Each declaration's review marks, from the S3 evidence records, with the status evidence-core
-    gives each against the dataset of the pinned commit: current, renamed (still current: it
-    followed the declaration to its new name), stale underneath (the declaration is written the
-    same, but something it rests on changed), or stale (the declaration changed)."""
+def who(by: dict) -> dict:
+    """How the page shows who made a record: the GitHub login, and the agent if it is one."""
+    return {"by": (by.get("identity") or {}).get("id", ""), "kind": by.get("kind", "person"),
+            "agent": evidence_records.agent_label(by.get("agent"))}
+
+
+def issue_url(r: dict) -> tuple:
+    repo, issue = issue_of((r.get("origin") or {}).get("ref", ""))
+    return issue, (f"https://github.com/{repo}/issues/{issue}" if repo and issue else "")
+
+
+def marks_from_evidence(index: dict, ev: Evidence) -> dict:
+    """Each declaration's review marks: the acceptances in the store that are neither withdrawn nor
+    superseded, each with the status evidence-core gives it against the pinned commit's dataset:
+    current, renamed (still current: it followed the declaration to its new name), stale underneath
+    (the declaration is written the same, but something it rests on changed), or stale (the
+    declaration changed)."""
     names = {item["name"] for item in index["declarations"]}
     marks = defaultdict(list)
     for name, rows in ev.by_decl.items():
@@ -123,31 +91,130 @@ def marks_from_evidence(index: dict, ev) -> dict:
         for r, s in rows:
             if r.get("kind") != "review" or r.get("verdict") != "accept":
                 continue
-            by = r.get("by", {})
-            repo, issue = issue_of(r.get("origin", {}).get("ref", ""))
+            if r["id"] in ev.superseded_by or ev.state(r["id"]) == "withdrawn":
+                continue
+            issue, url = issue_url(r)
             marks[name].append({
-                "trailer": "Reviewed-by", "by": by.get("identity", {}).get("id", ""),
-                "kind": by.get("kind", "person"), "agent": evidence_records.agent_label(by.get("agent")),
+                "trailer": "Reviewed-by", **who(r.get("by", {})),
                 "hash": r.get("subject", {}).get("hashes", {}).get("meaning", ""),
                 "current": s.applies, "status": s.state, "at": r.get("at", ""),
-                "evidence": r.get("rationale", ""), "source": {"issue": issue},
-                "url": f"https://github.com/{repo}/issues/{issue}" if repo and issue else "",
+                "evidence": r.get("rationale", ""), "issue": issue, "url": url, "id": r["id"],
                 **({"from": r["subject"]["name"]} if s.state == "renamed" else {})})
     for items in marks.values():
         items.sort(key=lambda m: (not m["current"], m["kind"] == "agent", m["at"]))
     return marks
 
 
-def named_coverage(named_decls: dict, ev) -> None:
-    """Adds to each named declaration how much of what its statement rests on is reviewed: the
-    project declarations in its meaning closure (itself included), those with a current review by a
-    person, and those with one by a person or an AI agent."""
-    for name, entry in named_decls.items():
+def tally(marks: list) -> dict:
+    """For each kind of mark: how many people and how many AI agents gave it on the current version
+    (each counted once), and how many marks are on earlier versions."""
+    out = {}
+    for trailer in MEANING:
+        given = [m for m in marks if m["trailer"] == trailer]
+        now = [m for m in given if m["current"]]
+        if given:
+            out[trailer] = {"people": len({m["by"] for m in now if m["kind"] == "person"}),
+                            "ai": len({(m["by"], m["agent"]) for m in now if m["kind"] == "agent"}),
+                            "earlier": len(given) - len(now)}
+    return out
+
+
+def latest(ev: Evidence, rid: str) -> dict:
+    return (ev.statuses.get(rid) or [{}])[-1]
+
+
+def problems_from_evidence(index: dict, ev: Evidence) -> dict:
+    """Each declaration's problem reports, open ones first, then the newest first."""
+    names = {item["name"] for item in index["declarations"]}
+    found = defaultdict(list)
+    for name, rows in ev.by_decl.items():
+        if name not in names:
+            continue
+        for r, s in rows:
+            if r.get("kind") != "review" or r.get("verdict") != "problem" or r["id"] in ev.superseded_by:
+                continue
+            state = ev.state(r["id"])
+            last = latest(ev, r["id"]) if state not in ("open",) else {}
+            issue, url = issue_url(r)
+            found[name].append({
+                "id": r["id"], "issue": issue, "url": url, "status": PROBLEM_STATE.get(state, state),
+                "what": (r.get("problem") or {}).get("category", "other"), "why": r.get("rationale", ""),
+                "fix": r.get("fix", ""), **who(r.get("by", {})),
+                "hash": r.get("subject", {}).get("hashes", {}).get("meaning", ""), "current": s.applies,
+                "at": r.get("at", ""),
+                **({"closedBy": who(last.get("by", {}))["by"], "closedAt": last.get("at", ""),
+                    "commit": last.get("commit", ""), "note": last.get("note", "")} if last else {})})
+    for items in found.values():
+        items.sort(key=lambda p: p["at"], reverse=True)
+        items.sort(key=lambda p: p["status"] != "open")
+    return found
+
+
+def tests_from_evidence(index: dict, ev: Evidence) -> dict:
+    """What each declaration is tested by: its unit tests (Tau Ceti's examples that name it, from
+    the dataset's examples facet), the key results listed as its tests and the challenges met (S3
+    `test` records and met `challenge`s), and the tests proposed for it (S3 challenges). A test
+    passes while it is in Tau Ceti at the pinned commit without `sorry`; the counts are of tests
+    that pass and of proposals still open."""
+    items = {item["name"]: item for item in index["declarations"]}
+    out = {}
+
+    def entry(name):
+        return out.setdefault(name, {"unit": [], "results": [], "suggested": []})
+    for example in index.get("examples", []):
+        for name in example["tests"]:
+            if name in items:
+                entry(name)["unit"].append({"statement": example["statement"], "path": example["path"],
+                                            "line": example["line"], "url": example["url"], "passes": not example["sorry"]})
+    for name in ev.by_decl:
+        if name not in items:
+            continue
+        for t in ev.tests(name):
+            test = items.get(t["test"])
+            r = t["record"] if "challenge" not in t else t["met"]
+            entry(name)["results"].append({
+                "test": t["test"], "status": t["result"], "statement": test["source"] if test else "",
+                "url": test["url"] if test else "", "checks": t["checks"], **who(r.get("by", {})),
+                "at": r.get("at", ""), **({"challenge": t["challenge"]["id"]} if "challenge" in t else {})})
+        for c, state in ev.challenges(name):
+            issue, url = issue_url(c)
+            last = latest(ev, c["id"]) if state != "open" else {}
+            met_by = (last.get("test") or {}).get("name", "") if isinstance(last.get("test"), dict) else ""
+            entry(name)["suggested"].append({
+                "id": c["id"], "issue": issue, "url": url, "status": CHALLENGE_STATE.get(state, state),
+                "test": c.get("property", ""), "statement": c.get("statement", ""), "catches": c.get("catches", ""),
+                "modes": c.get("modes", []), **who(c.get("by", {})), "at": c.get("at", ""),
+                **({"closedBy": who(last.get("by", {}))["by"], "closedAt": last.get("at", ""), "metBy": met_by} if last else {})})
+    for tests in out.values():
+        tests["tally"] = {"unit": sum(t["passes"] for t in tests["unit"]),
+                          "results": sum(r["status"] == "passes" for r in tests["results"]),
+                          "suggested": sum(s["status"] == "open" for s in tests["suggested"])}
+    return out
+
+
+def named_from_evidence(index: dict, ev: Evidence) -> dict:
+    """The named results and notable definitions: the declarations with a `named` record in force,
+    each with its name, what it is, a sentence, who named it and where, and how much of what it
+    rests on is reviewed: the project declarations in its meaning closure (itself included), those
+    with a current review by a person, and those with one by a person or an AI agent."""
+    names = {item["name"] for item in index["declarations"]}
+    out = {}
+    for name in sorted(ev.by_decl):
+        if name not in names:
+            continue
+        records = sorted(ev.named(name), key=lambda r: r.get("at", ""))
+        if not records:
+            continue
+        first = records[0]
         people = coverage_of(ev, name, Policy())
         anyone = coverage_of(ev, name, Policy(agents=True))
-        entry["coverage"] = {"members": len(people.members), "people": len(people.covered),
-                             "any": len(anyone.covered), "problems": len(people.with_problems),
-                             "upstream": len(people.upstream)}
+        out[name] = {"name": first.get("name", ""), "what": first.get("what", "result"), "about": first.get("about", ""),
+                     "sources": [{"source": r.get("source") or {}, "by": who(r.get("by", {}))["by"],
+                                  "agent": who(r.get("by", {}))["agent"], "at": r.get("at", "")} for r in records],
+                     "coverage": {"members": len(people.members), "people": len(people.covered),
+                                  "any": len(anyone.covered), "problems": len(people.with_problems),
+                                  "upstream": len(people.upstream)}}
+    return out
 
 
 def summary(doc: str, limit: int = 120) -> str:
@@ -165,7 +232,7 @@ def search_index(index: dict) -> dict:
     keywords = sorted({item.get("keyword", item["kind"]) for item in index["declarations"]})
     column = {keyword: n for n, keyword in enumerate(keywords)}
     rows = [[item["name"], column[item.get("keyword", item["kind"])], position[item["module"]], item.get("line", 0)]
-            for item in index["declarations"]]
+            for item in index["declarations"] if item["module"] in position]
     return {"tauceti": index["tauceti"], "read": index["read"], "modules": modules, "keywords": keywords, "rows": rows}
 
 
@@ -180,34 +247,26 @@ def shards(index: dict) -> dict:
     out = {n: {"module": module["module"], "path": module["path"], "url": module["url"], "summary": module_summary(module["doc"]),
                "declarations": []} for n, module in enumerate(index["modules"])}
     for item in index["declarations"]:
-        out[position[item["module"]]]["declarations"].append(
-            {key: item.get(key) for key in ("name", "kind", "keyword", "line", "end", "doc", "source", "hash", "url")})
+        if item["module"] in position:
+            out[position[item["module"]]]["declarations"].append(
+                {key: item.get(key) for key in ("name", "kind", "keyword", "line", "end", "doc", "source", "hash", "url")})
     return out
 
 
-def named(index: dict, roadmap: list = (), ledger: list = (), ev=None) -> dict:
-    """The named results and notable definitions: what to read first in a library
-    whose other declarations are mostly API, glue and steps of proofs."""
-    found = named_by_declaration(index, list(roadmap), list(ledger))
-    if ev is not None:
-        named_coverage(found, ev)
+def named(index: dict, ev: Evidence) -> dict:
     return {"schema": "named/v1", "tauceti": index["tauceti"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "declarations": found}
+            "declarations": named_from_evidence(index, ev)}
 
 
-def data(index: dict, records: list, problems: list = (), listed: list = (), suggestions: list = (), marks: dict | None = None) -> dict:
-    marks = marks if marks is not None else marks_by_declaration(index, records)
-    found = problems_by_declaration(index, list(problems))
-    tests = tests_by_declaration(index, list(listed), list(suggestions))
+def data(index: dict, ev: Evidence) -> dict:
+    marks = marks_from_evidence(index, ev)
+    found = problems_from_evidence(index, ev)
+    tests = tests_from_evidence(index, ev)
     by_name = {item["name"]: item for item in index["declarations"]}
     return {"schema": "reviewed-by/v1", "tauceti": index["tauceti"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "declarations": {name: {"hash": by_name[name]["hash"], "kind": by_name[name]["kind"], "url": by_name[name]["url"],
-                                    "tally": tally(marks.get(name, [])),
-                                    "marks": [{**{k: m[k] for k in ("trailer", "by", "kind", "agent", "hash", "current", "at", "evidence")},
-                                               **{k: m[k] for k in ("status", "url", "from") if m.get(k)},
-                                               "issue": m.get("source", {}).get("issue")} for m in marks.get(name, [])],
-                                    "problems": [{k: p[k] for k in PROBLEM_KEYS if k in p} for p in found.get(name, [])],
-                                    **({"tests": tests[name]} if name in tests else {})}
+                                    "tally": tally(marks.get(name, [])), "marks": marks.get(name, []),
+                                    "problems": found.get(name, []), **({"tests": tests[name]} if name in tests else {})}
                              for name in sorted(set(marks) | set(found) | set(tests))}}
 
 
@@ -314,8 +373,12 @@ const SETTINGS = JSON.parse(document.getElementById('settings').textContent);
 const $ = id => document.getElementById(id);
 const DEFS = new Set(['def', 'abbrev', 'structure', 'class', 'inductive', 'instance', 'class inductive']);
 const MEANING = {'Reviewed-by': 'it is the intended mathematical notion', 'Tested-by': 'its examples and unit tests check out'};
-const WHAT = {wrong: 'Wrong', misleading: 'Misleading name or docstring', other: 'Something else is off'};
-const CLOSED = {fixed: 'Fixed', 'not planned': 'Closed without a fix', duplicate: 'Closed as a duplicate'};
+// What a problem report says is wrong: the failure modes of trusting-definitions.md, as the problem form asks.
+const WHAT = {F1: 'A different object', F2: 'A different convention', F3: 'Wrong on edge cases', F4: 'A junk value',
+  F5: 'Vacuous or trivial', F6: 'An arbitrary choice', F7: 'Something wrong underneath', F8: 'Drift', F9: 'Less general than the source',
+  naming: 'Misleading name or docstring', other: 'Something else is off', wrong: 'Wrong', misleading: 'Misleading name or docstring'};
+const CLOSED = {fixed: 'Fixed', intended: 'Intended as it is', invalid: 'Not a problem', withdrawn: 'Withdrawn',
+  'not planned': 'Closed without a fix', duplicate: 'Closed as a duplicate'};
 const PAGE = 60;
 let index = null, lower = [], leafLower = [], area = [], docs = null, docsLower = null, marks = {}, reviewed = new Set(), flagged = new Set(), tested = new Set();
 let namedOf = {}, namedLower = [];
@@ -329,18 +392,15 @@ function prose(text) {
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2">$1</a>') + '</p>').join('');
 }
 const when = s => { const d = new Date(s); return isNaN(d) ? s : d.toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'}); };
-function reviewLink(name, hash) {
-  const q = new URLSearchParams({template: 'reviewed-by.yml', title: 'Review: ' + name, declaration: name, version: hash});
+// The evidence store's issue forms (evidence-store), with the declaration and the commit shown filled in.
+function formLink(template, title, name) {
+  const q = new URLSearchParams({template, title: title + name, decl: name, commit: SETTINGS.tauceti});
   return 'https://github.com/' + SETTINGS.repo + '/issues/new?' + q.toString();
 }
-function suggestLink(name, hash) {
-  const q = new URLSearchParams({template: 'test.yml', title: 'Test: ' + name, declaration: name, version: hash});
-  return 'https://github.com/' + SETTINGS.repo + '/issues/new?' + q.toString();
-}
-function problemLink(name, hash) {
-  const q = new URLSearchParams({template: 'problem.yml', title: 'Problem: ' + name, declaration: name, version: hash});
-  return 'https://github.com/' + SETTINGS.repo + '/issues/new?' + q.toString();
-}
+const reviewLink = name => formLink('evidence-review.yml', 'Review: ', name);
+const suggestLink = name => formLink('evidence-challenge.yml', 'Challenge: ', name);
+const problemLink = name => formLink('evidence-problem.yml', 'Problem: ', name);
+const testLink = name => formLink('evidence-test.yml', 'Test: ', name);
 const issueUrl = n => 'https://github.com/' + SETTINGS.repo + '/issues/' + n;
 
 function readHash() {
@@ -458,7 +518,7 @@ function testCount(t) {
   const parts = [];
   if (t.unit) parts.push(t.unit + (t.unit === 1 ? ' unit test' : ' unit tests'));
   if (t.results) parts.push(t.results + (t.results === 1 ? ' key result' : ' key results'));
-  if (t.suggested) parts.push(t.suggested + ' suggested');
+  if (t.suggested) parts.push(t.suggested + ' proposed');
   return parts.join(' · ');
 }
 const PASSES = {passes: '<span class="pass">passes</span>', sorry: '<span class="fail">has sorry</span>', missing: '<span class="fail">not in Tau Ceti at this commit</span>'};
@@ -467,16 +527,19 @@ function testsHtml(tests) {
   const unit = tests.unit.map(u => '<div class="test"><p class="line">' + PASSES[u.passes ? 'passes' : 'sorry'] + ' · <a href="' + esc(u.url) + '">' +
     esc(u.path) + ', line ' + esc(u.line) + '</a></p><pre>' + esc(u.statement) + '</pre></div>').join('');
   const results = tests.results.map(r => '<div class="test"><p class="line">' + (PASSES[r.status] || '') + ' · ' +
-    (r.url ? '<a class="mono" href="' + esc(r.url) + '">' + esc(r.test) + '</a>' : '<span class="mono">' + esc(r.test) + '</span>') + ' · listed by ' + byHtml(r) + '</p>' +
+    (r.url ? '<a class="mono" href="' + esc(r.url) + '">' + esc(r.test) + '</a>' : '<span class="mono">' + esc(r.test) + '</span>') +
+    (r.challenge ? ' · meets a proposed test, by ' : ' · listed by ') + byHtml(r) + '</p>' +
     (r.statement ? '<pre>' + esc(r.statement) + '</pre>' : '') + (r.checks ? '<p>' + esc(r.checks) + '</p>' : '') + '</div>').join('');
-  const suggested = tests.suggested.map(t => '<div class="test"><p class="line">' + (t.status === 'open' ? 'Suggested' : esc(t.status)) + ' by ' + byHtml(t) +
-    ', ' + when(t.at) + ' · <a href="' + esc(issueUrl(t.issue)) + '">Issue #' + esc(t.issue) + '</a></p>' + prose(t.test) +
+  const suggested = tests.suggested.map(t => '<div class="test"><p class="line">' + (t.status === 'open' ? 'Proposed' : esc(t.status[0].toUpperCase() + t.status.slice(1))) +
+    (t.metBy ? ' as <span class="mono">' + esc(t.metBy) + '</span>' : '') + ' · proposed by ' + byHtml(t) +
+    ', ' + when(t.at) + (t.issue ? ' · <a href="' + esc(t.url || issueUrl(t.issue)) + '">Issue #' + esc(t.issue) + '</a>' : '') + '</p>' + prose(t.test) +
+    (t.statement ? '<pre>' + esc(t.statement) + '</pre>' : '') +
     (t.catches ? '<p class="note">Would catch: ' + esc(t.catches) + '</p>' : '') + '</div>').join('');
   return '<div class="marks"><span class="mark summary tested" title="What it passes: unit tests and key results in Tau Ceti"><span class="tick" aria-hidden="true">✓</span>' +
     '<span class="trailer">Tested by</span> <span class="who">' + esc(testCount(tests.tally) || 'nothing that passes yet') + '</span></span></div>' +
     '<details class="which"' + (total <= 3 ? ' open' : '') + '><summary>Which (' + total + ')</summary>' +
     (unit ? '<p class="head">Unit tests: examples in Tau Ceti that name it</p>' + unit : '') +
-    (results ? '<p class="head">Key results listed as tests</p>' + results : '') + (suggested ? '<p class="head">Suggested tests</p>' + suggested : '') + '</details>';
+    (results ? '<p class="head">Key results listed as tests</p>' + results : '') + (suggested ? '<p class="head">Proposed tests</p>' + suggested : '') + '</details>';
 }
 function namedHtml(name) {
   const named = namedOf[name];
@@ -489,7 +552,8 @@ function namedHtml(name) {
       const prs = (s.source.prs || []).map(n => '<a href="https://github.com/TauCetiProject/TauCeti/pull/' + n + '">TauCeti#' + n + '</a>').join(', ');
       return 'Voyager' + (prs ? ', ' + prs : '') + (s.at ? ', ' + when(s.at) : '');
     }
-    return esc(s.by ? '@' + s.by : 'a reader');
+    if (s.source && s.source.url) return '<a href="' + esc(s.source.url) + '">' + esc(s.agent || ('@' + s.by)) + '</a>';
+    return s.agent ? esc(s.agent) + (s.by ? ' via @' + esc(s.by) : '') : esc(s.by ? '@' + s.by : 'a reader');
   });
   const c = named.coverage;
   const cover = c ? '<br><span class="from">What it says rests on ' + c.members + ' Tau Ceti declaration' + (c.members === 1 ? '' : 's') +
@@ -520,7 +584,8 @@ function problemHtml(p) {
     esc(WHAT[p.what] || 'Problem') + ' · reported by ' + who + ', ' + when(p.at) +
     (p.current ? '' : ' · <span class="note">about an earlier version; the declaration has changed since</span>') + '</p>' + prose(p.why) +
     (p.fix ? '<p class="fix">Suggested fix</p><pre>' + esc(p.fix) + '</pre>' : '') +
-    '<p><a href="' + esc(issueUrl(p.issue)) + '">Issue #' + esc(p.issue) + '</a>' + (p.closedAt ? ' · closed by @' + esc(p.closedBy) + ', ' + when(p.closedAt) : '') + '</p></div>';
+    '<p><a href="' + esc(p.url || issueUrl(p.issue)) + '">Issue #' + esc(p.issue) + '</a>' + (p.closedAt ? ' · ' + esc((CLOSED[p.status] || 'closed').toLowerCase()) + ' by @' + esc(p.closedBy) + ', ' + when(p.closedAt) +
+      (p.commit ? ' in <span class="mono">' + esc(p.commit.slice(0, 12)) + '</span>' : '') : '') + '</p></div>';
 }
 function moduleHtml(name) {
   const m = index.modules.indexOf(name);
@@ -558,6 +623,7 @@ async function renderPanel() {
     '<pre><code id="src">' + esc(long ? lines.slice(0, 60).join('\n') + '\n…' : item.source) + '</code></pre>' +
     '<div class="actions"><a class="primary" href="' + esc(reviewLink(name, item.hash)) + '">Review this</a>' +
     '<a class="quiet" href="' + esc(suggestLink(name, item.hash)) + '">Suggest a test</a>' +
+    '<a class="quiet" href="' + esc(testLink(name)) + '">List a test</a>' +
     '<a class="quiet warn" href="' + esc(problemLink(name, item.hash)) + '">Report a problem</a>' +
     '<button class="quiet" id="copy">Copy name</button><a class="quiet" href="' + esc(item.url) + '">Source on GitHub</a>' + (long ? '<button class="quiet" id="all">Show all ' + lines.length + ' lines</button>' : '') + '</div>' +
     (entry && entry.problems && entry.problems.length ? '<p class="sub">Problems</p>' + entry.problems.map(problemHtml).join('') : '') +
@@ -632,10 +698,12 @@ window.addEventListener('popstate', () => { readHash(); render(); });
 """
 
 
-def page(index: dict, records: list, settings: dict, problems: list = (), named_list: list = ()) -> str:
+def page(index: dict, settings: dict, reviews: dict, named_decls: dict) -> str:
     total = len(index["declarations"])
-    named_count = len(named_by_declaration(index, list(named_list), []))
-    open_problems = sum(p["status"] == "open" for items in problems_by_declaration(index, list(problems)).values() for p in items)
+    named_count = len(named_decls)
+    entries = reviews["declarations"].values()
+    marks = sum(len(e["marks"]) for e in entries)
+    open_problems = sum(p["status"] == "open" for e in entries for p in e["problems"])
     config = json.dumps({"repo": settings["repo"], "bulk_issue": settings["bulk_issue"], "count": total, "tauceti": index["tauceti"]})
     config = config.replace("<", "\\u003c")
     bulk = f"https://github.com/{settings['repo']}/issues/{settings['bulk_issue']}"
@@ -662,20 +730,20 @@ def page(index: dict, records: list, settings: dict, problems: list = (), named_
   <p class="eyebrow">Test · review marks</p>
   <h1>Reviewed-by for Tau Ceti</h1>
   <p class="lede">Every declaration of Tau Ceti, searchable, with who has checked which and on which version, recorded from the browser without pull requests.</p>
-  <p class="meta">Tau Ceti <a href="https://github.com/TauCetiProject/TauCeti/tree/{html.escape(index['tauceti'])}">{html.escape(index['tauceti'][:7])}</a> · {total:,} declarations in {len(index['modules']):,} modules · {named_count:,} named{f" · {len(records)} review{'s' if len(records) != 1 else ''}" if records else ''}{f" · {open_problems} open problem{'s' if open_problems != 1 else ''}" if open_problems else ''}</p>
+  <p class="meta">Tau Ceti <a href="https://github.com/TauCetiProject/TauCeti/tree/{html.escape(index['tauceti'])}">{html.escape(index['tauceti'][:7])}</a> · {total:,} declarations in {len(index['modules']):,} modules · {named_count:,} named{f" · {marks} review{'s' if marks != 1 else ''}" if marks else ''}{f" · {open_problems} open problem{'s' if open_problems != 1 else ''}" if open_problems else ''}</p>
 </header>
 <details class="how">
   <summary>How to leave a mark</summary>
   <ol>
-    <li>Find the declaration, open it and press <strong>Review this</strong>: a GitHub form opens with its name and version filled in. Submit it to say it is the intended mathematical notion. Saying what you checked is optional for people; AI agents must.</li>
-    <li>A bot records the mark, answers on the issue and closes it. There is no pull request, and this page updates within a few minutes.</li>
-    <li>A mark is keyed by the declaration's <em>meaning hash</em>, which changes when the declaration, or anything it rests on, changes meaning, and not when it is renamed, reformatted or re-proved. When it changes, the mark stays but is greyed, as <em>earlier version</em> if the declaration itself was rewritten, or as <em>something it rests on changed since</em> if it reads the same but a definition it uses moved. A renamed declaration keeps its marks.</li>
+    <li>Find the declaration, open it and press <strong>Review this</strong>: a GitHub form opens with its name and the commit shown filled in. Submit it to say it is the intended mathematical notion, and, if you like, what you compared it with and which ways a definition goes wrong you checked. Saying why is optional for people; AI agents must.</li>
+    <li>A bot records the review in the evidence store of this repository, answers on the issue and closes it. There is no pull request, and this page updates within a few minutes.</li>
+    <li>A review is keyed by the declaration's <em>meaning hash</em>, which changes when the declaration, or anything it rests on, changes meaning, and not when it is renamed, reformatted or re-proved. When it changes, the mark stays but is greyed, as <em>earlier version</em> if the declaration itself was rewritten, or as <em>something it rests on changed since</em> if it reads the same but a definition it uses moved. A renamed declaration keeps its marks. Comment <code>/withdraw</code> on your review's issue to take it back.</li>
     <li>Each declaration counts its reviews, people apart from AI agents; <strong>Who</strong> lists them, with dates, versions and evidence.</li>
     <li><strong>Named</strong> shows only the named results and notable definitions: the ones the roadmaps' status files and Voyager's announcements single out, rather than the API and proof steps around them.</li>
   </ol>
-  <p><strong>Tests</strong> are what a declaration passes, rather than a mark: its unit tests (the examples in Tau Ceti that name it), key results listed as its tests, mostly by AI agents, and tests anyone suggests with <strong>Suggest a test</strong>. A test passes while it is in Tau Ceti at the pinned commit without <code>sorry</code>. <strong>Which</strong> shows each with its statement.</p>
-  <p>If a declaration is wrong, press <strong>Report a problem</strong> instead and say why. The report is the issue for fixing it: it stays open, and the page flags the declaration, until it is closed as fixed or as not a problem.</p>
-  <p>Marking many at once: comment lines like <code>Reviewed-by: TauCeti.X.y — what you checked</code> on <a href="{html.escape(bulk)}">issue #{settings['bulk_issue']}</a>. AI agents use the same routes and name the agent, model and session; their marks are shown apart from people's.</p>
+  <p><strong>Tests</strong> are what a declaration passes, rather than a mark: its unit tests (the examples in Tau Ceti that name it), key results listed as its tests with <strong>List a test</strong>, and tests anyone proposes with <strong>Suggest a test</strong>: a property it should have, which stays open until someone proves it in Tau Ceti and comments <code>/met &lt;the declaration that proves it&gt;</code> on its issue (or <code>/failed</code>, if it turns out false: then report the problem). A test passes while it is in Tau Ceti at the pinned commit without <code>sorry</code>. <strong>Which</strong> shows each with its statement.</p>
+  <p>If a declaration is wrong, press <strong>Report a problem</strong> instead and say why, and how to fix it if you know. The report is the issue for fixing it: it stays open, and the page flags the declaration, until its reporter or a maintainer closes it as completed (fixed) or as not planned (not a problem), or comments <code>/fixed &lt;commit&gt;</code>, <code>/intended</code> or <code>/invalid</code>.</p>
+  <p>Marking many at once: comment lines like <code>Reviewed-by: TauCeti.X.y — what you checked</code>, <code>Test: TauCeti.X.y — TauCeti.X.y_zero — what it checks</code> or <code>Named: TauCeti.X.y — its name — a sentence</code> on <a href="{html.escape(bulk)}">issue #{settings['bulk_issue']}</a>. AI agents use the same routes and name the agent, model and session; their marks are shown apart from people's.</p>
   <dl class="legend">{legend}</dl>
 </details>
 <div class="bar"><div class="bar-inner">
@@ -691,7 +759,7 @@ def page(index: dict, records: list, settings: dict, problems: list = (), named_
   <aside class="panel" id="panel" aria-live="polite"></aside>
 </div>
 <footer>
-  <p>The marks as data, for the atlas or Tau Ceti's own documentation: <a href="reviews.json">reviews.json</a>. The evidence records (S3): the store <a href="https://github.com/{repo}/tree/main/evidence">evidence/</a>. Declarations and hashes come from a dataset extracted from the compiled library by <a href="https://github.com/LeanTrustBuilders/extractor">trust-extract</a>; statuses and coverage are computed by <a href="https://github.com/LeanTrustBuilders/evidence-core">evidence-core</a>. The pilot of the <a href="https://github.com/LeanTrustBuilders">LeanTrustBuilders</a> suite, in <a href="https://github.com/{repo}">{repo}</a>; nothing here changes Tau Ceti.{missing}</p>
+  <p>The marks as data, for the atlas or Tau Ceti's own documentation: <a href="reviews.json">reviews.json</a>. Everything shown here comes from the <a href="https://github.com/LeanTrustBuilders">LeanTrustBuilders</a> suite: declarations and hashes from a dataset extracted from the compiled library by <a href="https://github.com/LeanTrustBuilders/extractor">trust-extract</a>; reviews, tests, problems and names from the evidence store <a href="https://github.com/{repo}/tree/main/evidence">evidence/</a>, filled from this repository's issues by <a href="https://github.com/LeanTrustBuilders/evidence-store">evidence-store</a>; what applies now computed by <a href="https://github.com/LeanTrustBuilders/evidence-core">evidence-core</a>. In <a href="https://github.com/{repo}">{repo}</a>; nothing here changes Tau Ceti.{missing}</p>
 </footer>
 <script type="application/json" id="settings">{config}</script>
 <script>{SCRIPT}</script>
@@ -702,35 +770,33 @@ def page(index: dict, records: list, settings: dict, problems: list = (), named_
 
 def main() -> int:
     import argparse
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", type=Path, help="the dataset (S2) of the pinned commit: marks are then read from "
-                                                     "the evidence store evidence/, with their statuses, and named results get coverage")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--dataset", type=Path, required=True, help="the dataset (S2) of the pinned commit")
+    parser.add_argument("--store", type=Path, default=ROOT / "evidence", help="the evidence store (S3)")
     args = parser.parse_args()
     index = json.loads((ROOT / "data" / "declarations.json").read_text(encoding="utf-8"))
     settings = json.loads((ROOT / "data" / "settings.json").read_text(encoding="utf-8"))
-    roadmap_named = json.loads((ROOT / "data" / "named-roadmaps.json").read_text(encoding="utf-8")) if (ROOT / "data" / "named-roadmaps.json").exists() else []
-    announced = load(ROOT / "reviews" / "named.jsonl")
-    records = load(ROOT / "reviews" / "records.jsonl")
-    problems = load(ROOT / "reviews" / "problems.jsonl")
-    listed, suggestions = load(ROOT / "reviews" / "tests.jsonl"), load(ROOT / "reviews" / "suggestions.jsonl")
-    ev = marks = None
-    if args.dataset:
-        ev = Evidence.resolve(Store.load(ROOT / "evidence").records, Dataset.load(args.dataset))
-        marks = marks_from_evidence(index, ev)
+    ev = Evidence.resolve(Store.load(args.store).records, Dataset.load(args.dataset))
+    reviews = data(index, ev)
+    named_file = named(index, ev)
     out = ROOT / "site"
     if (out / "data").exists():
         shutil.rmtree(out / "data")
     (out / "data" / "m").mkdir(parents=True)
     compact = {"ensure_ascii": False, "separators": (",", ":")}
-    (out / "index.html").write_text(page(index, records, settings, problems, roadmap_named + announced), encoding="utf-8")
-    (out / "named.json").write_text(json.dumps(named(index, roadmap_named, announced, ev), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    (out / "index.html").write_text(page(index, settings, reviews, named_file["declarations"]), encoding="utf-8")
+    (out / "named.json").write_text(json.dumps(named_file, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     (out / "data" / "search.json").write_text(json.dumps(search_index(index), **compact), encoding="utf-8")
     (out / "data" / "docs.json").write_text(json.dumps([summary(item["doc"]) for item in index["declarations"]], **compact), encoding="utf-8")
     for n, shard in shards(index).items():
         (out / "data" / "m" / f"{n}.json").write_text(json.dumps(shard, **compact), encoding="utf-8")
-    (out / "reviews.json").write_text(json.dumps(data(index, records, problems, listed, suggestions, marks), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    (out / "reviews.json").write_text(json.dumps(reviews, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    entries = reviews["declarations"].values()
     print(f"site: {len(index['declarations'])} declarations in {len(index['modules'])} modules, "
-          f"{len(named_by_declaration(index, roadmap_named, announced))} named, {len(records)} marks, {len(reports(problems))} problem reports")
+          f"{len(named_file['declarations'])} named, {sum(len(e['marks']) for e in entries)} marks, "
+          f"{sum(len(e['problems']) for e in entries)} problem reports, "
+          f"{sum(len(e.get('tests', {}).get('results', [])) for e in entries)} listed tests, "
+          f"{sum(len(e.get('tests', {}).get('suggested', [])) for e in entries)} proposed tests")
     return 0
 
 

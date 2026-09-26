@@ -4,8 +4,8 @@ Serves site/ as GitHub Pages would and checks what a reader does: search by
 name and by docstring, filter definitions, open a declaration and review it,
 follow a link to one, and read it on a phone. Build the site first:
 
-  python3 scripts/fetch_declarations.py --clone <Tau Ceti checkout>
-  python3 scripts/build_site.py
+  python3 scripts/dataset_declarations.py --dataset <dataset> --clone <Tau Ceti checkout>
+  python3 scripts/build_site.py --dataset <dataset>
   python3 tests/validate_site.py [screenshot folder]
 
 Prints PASS and exits 0, or names the failed check and exits 1.
@@ -63,7 +63,7 @@ def main() -> int:
             page.locator(".result").first.click()
             page.wait_for_selector("#panel pre", timeout=15000)
             href = page.locator("#panel a.primary").get_attribute("href")
-            check("a declaration opens with its source and a review link", "template=reviewed-by.yml" in href and "declaration=" in href and "version=" in href)
+            check("a declaration opens with its source and a review link", "template=evidence-review.yml" in href and "decl=" in href and "commit=" in href)
             check("its module's other declarations are listed", page.locator("#panel .siblings button").count() >= 1)
             if shots:
                 page.screenshot(path=str(shots / "site-declaration.png"))
@@ -88,7 +88,7 @@ def main() -> int:
             phone.locator("#back").tap()
             phone.wait_for_timeout(300)
             check("back returns to the results", not phone.evaluate("document.body.classList.contains('reading')") and phone.locator(".result").count() > 0)
-            # A problem report, added to the page's data in flight so the ledger
+            # A problem report, added to the page's data in flight so the store
             # stays real: flagged, listed by the filter, shown with its issue.
             reported = "TauCeti.IdealArithmeticFunction.vonMangoldt"
 
@@ -136,13 +136,15 @@ def main() -> int:
             check("the names are folded away", not flagged.evaluate("document.querySelector('#panel details.who').open"))
             flagged.locator("#panel details.who summary").click()
             check("one click shows who gave each mark", flagged.locator("#panel details.who .mark").count() == 17)
-            check("its tests are counted", "1 unit test · 1 key result · 1 suggested" in flagged.locator("#panel .mark.tested").text_content())
+            check("its tests are counted", "1 unit test · 1 key result · 1 proposed" in flagged.locator("#panel .mark.tested").text_content())
             check("each test shows its statement and whether it passes",
                   flagged.locator("#panel details.which .test").count() == 3 and flagged.locator("#panel details.which .pass").count() == 2)
-            suggest = flagged.locator("#panel a[href*='template=test.yml']").get_attribute("href")
-            check("a declaration offers Suggest a test, filled in", "declaration=" in suggest and "version=" in suggest)
+            suggest = flagged.locator("#panel a[href*='template=evidence-challenge.yml']").get_attribute("href")
+            check("a declaration offers Suggest a test, filled in", "decl=" in suggest and "commit=" in suggest)
+            listed = flagged.locator("#panel a[href*='template=evidence-test.yml']").get_attribute("href")
+            check("and List a test", "decl=" in listed and "commit=" in listed)
             report = flagged.locator("#panel a.warn").get_attribute("href")
-            check("a declaration offers Report a problem, filled in", "template=problem.yml" in report and "declaration=" in report and "version=" in report)
+            check("a declaration offers Report a problem, filled in", "template=evidence-problem.yml" in report and "decl=" in report and "commit=" in report)
             if shots:
                 flagged.screenshot(path=str(shots / "site-problem.png"))
             # The named results and definitions, and a file's own page.

@@ -6,13 +6,18 @@ name: Dataset
 # Tau Ceti's modules come from its public Lake cache and Mathlib's from Mathlib's, so little is
 # compiled: only what the cache lacks. A module that does not build is left out, and the dataset
 # says so (library.unavailable). trust-extract is the newest release of LeanTrustBuilders/extractor
-# for Tau Ceti's toolchain.
+# for Tau Ceti's toolchain; its examples.py adds the `examples` facet (the unit tests the page
+# shows), read from the sources.
 on:
   workflow_dispatch:
     inputs:
       commit:
         description: The Tau Ceti commit (default the one pinned in data/settings.json)
         required: false
+      replace:
+        description: Extract it again and replace the published dataset (for a new extractor release)
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       commit:
@@ -46,7 +51,11 @@ jobs:
         id: published
         run: |
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "The dataset for $COMMIT is already published as $TAG"; echo "done=true" >> "$GITHUB_OUTPUT"
+            if [ "${{ inputs.replace }}" = "true" ]; then
+              echo "The dataset for $COMMIT is published as $TAG: extracting it again to replace it"; echo "done=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "The dataset for $COMMIT is already published as $TAG"; echo "done=true" >> "$GITHUB_OUTPUT"
+            fi
           else echo "done=false" >> "$GITHUB_OUTPUT"; fi
       - name: Room on the runner
         if: steps.published.outputs.done != 'true'
@@ -107,11 +116,19 @@ jobs:
             --no-statements --no-signatures --no-upstream-docs
           # This page shows neither statements taken apart nor hovers: the three flags keep the
           # dataset at the size it had before trust-extract 0.4 (Tau Ceti's would otherwise double).
+          python3 "$RUNNER_TEMP/trust-extract/examples.py" --dataset "$RUNNER_TEMP/dataset" --source "$RUNNER_TEMP/TauCeti"
           du -sh "$RUNNER_TEMP/dataset"
       - name: Publish
         if: steps.published.outputs.done != 'true'
         run: |
           tar -czf "$RUNNER_TEMP/dataset.tar.gz" -C "$RUNNER_TEMP/dataset" .
-          gh release create "$TAG" "$RUNNER_TEMP/dataset.tar.gz" -R "$GITHUB_REPOSITORY" --latest=false \
-            --title "Dataset for Tau Ceti ${COMMIT:0:12}" \
-            --notes "Extracted by trust-extract from TauCetiProject/TauCeti@$COMMIT. Spec: ltb-dataset/0 (LeanTrustBuilders/specs)."
+          version=$("$RUNNER_TEMP/trust-extract/trust-extract" version | head -1)
+          spec=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['spec'])" "$RUNNER_TEMP/dataset/meta.json")
+          notes="Extracted by $version from TauCetiProject/TauCeti@$COMMIT, with the examples facet. Spec: $spec (LeanTrustBuilders/specs)."
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$RUNNER_TEMP/dataset.tar.gz" -R "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes "$notes"
+          else
+            gh release create "$TAG" "$RUNNER_TEMP/dataset.tar.gz" -R "$GITHUB_REPOSITORY" --latest=false \
+              --title "Dataset for Tau Ceti ${COMMIT:0:12}" --notes "$notes"
+          fi

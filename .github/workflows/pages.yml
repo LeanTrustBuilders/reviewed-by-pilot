@@ -1,7 +1,8 @@
 name: Page
 
 # Builds the search page of every Tau Ceti declaration (at the commit pinned in
-# data/settings.json) and its marks, and publishes it.
+# data/settings.json) and what the evidence store says of each, and publishes it. The intake
+# (evidence-intake.yml) runs it after it records something.
 on:
   push:
     branches: [main]
@@ -32,11 +33,8 @@ jobs:
         with:
           token: ${{ github.token }}
       - run: python3 -m unittest discover -s tests
-      - name: Build the page, with statuses and coverage from the dataset when there is one
-        env:
-          DATASET: ${{ steps.declarations.outputs.dataset }}
-        run: |
-          if [ -n "$DATASET" ]; then python3 scripts/build_site.py --dataset "$DATASET"; else python3 scripts/build_site.py; fi
+      - name: Build the page
+        run: python3 scripts/build_site.py --dataset "${{ steps.declarations.outputs.dataset }}"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

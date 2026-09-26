@@ -1,175 +1,137 @@
-"""The search page of Tau Ceti declarations and their marks (scripts/build_site.py)."""
-import json
+"""The page (scripts/build_site.py): what it shows of each declaration, computed from the evidence
+store (S3) against the dataset (S2) by evidence-core."""
 import sys
+import tempfile
 import unittest
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from build_site import (data, marks_by_declaration, page, problem_link, problems_by_declaration, review_link, search_index,  # noqa: E402
-                        module_link, named, shards, suggest_link, summary)
-from reviews import tests_by_declaration  # noqa: E402
-
-INDEX = {"tauceti": "c0ffee1234567", "read": "2026-09-21T15:00:00Z",
-         "modules": [{"module": "TauCeti.NumberTheory.X", "path": "TauCeti/NumberTheory/X.lean", "doc": "# X\n\nAbout X.", "url": "u", "declarations": 2},
-                     {"module": "TauCeti.Algebra.Y", "path": "TauCeti/Algebra/Y.lean", "doc": "", "url": "v", "declarations": 1}],
-         "declarations": [
-             {"name": "TauCeti.X.f", "kind": "def", "keyword": "abbrev", "module": "TauCeti.NumberTheory.X", "path": "TauCeti/NumberTheory/X.lean",
-              "line": 3, "end": 4, "doc": "The **function** `f`. It is one.", "source": "abbrev f := 1", "hash": "aaaaaaaaaaaa", "url": "u1"},
-             {"name": "TauCeti.X.f_one", "kind": "theorem", "keyword": "lemma", "module": "TauCeti.NumberTheory.X", "path": "TauCeti/NumberTheory/X.lean",
-              "line": 6, "end": 6, "doc": "", "source": "lemma f_one : f = 1", "hash": "bbbbbbbbbbbb", "url": "u2"},
-             {"name": "TauCeti.Y.g", "kind": "def", "keyword": "def", "module": "TauCeti.Algebra.Y", "path": "TauCeti/Algebra/Y.lean",
-              "line": 1, "end": 1, "doc": "A map.", "source": "def g := 2", "hash": "cccccccccccc", "url": "u3"}]}
-RECORDS = [
-    {"decl": "TauCeti.X.f", "hash": "aaaaaaaaaaaa", "trailer": "Reviewed-by", "by": "alice", "kind": "person", "agent": "", "evidence": "Matches Neukirch.", "source": {"issue": 3}, "at": "2026-09-21T15:10:00Z"},
-    {"decl": "TauCeti.X.f", "hash": "000000000000", "trailer": "Reviewed-by", "by": "bob", "kind": "agent", "agent": "Codex, session c1", "evidence": "Checked.", "source": {"issue": 5, "comment": 9}, "at": "2026-09-20T10:00:00Z"},
-    {"decl": "TauCeti.Gone", "hash": "dddddddddddd", "trailer": "Tested-by", "by": "carol", "kind": "person", "agent": "", "evidence": "", "source": {"issue": 6}, "at": "2026-09-19T10:00:00Z"}]
-SETTINGS = {"repo": "CBirkbeck/test", "bulk_issue": 1, "tauceti": "c0ffee1234567"}
-PROBLEMS = [
-    {"schema": "problem/v1", "event": "reported", "issue": 12, "decl": "TauCeti.Y.g", "hash": "cccccccccccc", "tauceti": "c0ffee1234567",
-     "what": "wrong", "why": "It should be 3.", "fix": "def g := 3", "by": "alice", "kind": "person", "agent": "", "at": "2026-09-22T15:00:00Z"},
-    {"schema": "problem/v1", "event": "reported", "issue": 13, "decl": "TauCeti.X.f", "hash": "000000000000", "tauceti": "0ld",
-     "what": "misleading", "why": "The docstring says two.", "fix": "", "by": "bob", "kind": "agent", "agent": "Codex, session c1", "at": "2026-09-20T10:00:00Z"},
-    {"schema": "problem/v1", "event": "closed", "issue": 13, "resolution": "fixed", "by": "carol", "at": "2026-09-21T10:00:00Z"}]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_site import data, issue_of, named, page, search_index, shards, summary  # noqa: E402
+from evidence_core import Evidence  # noqa: E402
+from evidence_core import records as rec  # noqa: E402
+import mini  # noqa: E402
+from mini import INDEX, SETTINGS, agent, person, record, status  # noqa: E402
 
 
-class Links(unittest.TestCase):
-    def test_review_this_fills_in_the_declaration_and_the_version_shown(self):
-        url = urlparse(review_link("CBirkbeck/test", INDEX["declarations"][0]))
-        query = parse_qs(url.query)
-        self.assertEqual((url.netloc, url.path), ("github.com", "/CBirkbeck/test/issues/new"))
-        self.assertEqual(query["template"], ["reviewed-by.yml"])
-        self.assertEqual(query["declaration"], ["TauCeti.X.f"])
-        self.assertEqual(query["version"], ["aaaaaaaaaaaa"])
-
-    def test_report_a_problem_fills_in_the_declaration_and_the_version_shown(self):
-        url = urlparse(problem_link("CBirkbeck/test", INDEX["declarations"][2]))
-        query = parse_qs(url.query)
-        self.assertEqual((url.netloc, url.path), ("github.com", "/CBirkbeck/test/issues/new"))
-        self.assertEqual((query["template"], query["title"]), (["problem.yml"], ["Problem: TauCeti.Y.g"]))
-        self.assertEqual((query["declaration"], query["version"]), (["TauCeti.Y.g"], ["cccccccccccc"]))
+def rekeyed(r: dict, subject: dict) -> dict:
+    """A record about another version of its declaration."""
+    out = {k: v for k, v in r.items() if k != "id"}
+    out["subject"] = {**out["subject"], **subject}
+    return rec.with_id(out)
 
 
-class Problems(unittest.TestCase):
-    def test_a_report_is_open_until_its_issue_is_closed(self):
-        status = lambda events: problems_by_declaration(INDEX, events)["TauCeti.Y.g"][0]["status"]
-        closed = {"schema": "problem/v1", "event": "closed", "issue": 12, "resolution": "fixed", "by": "carol", "at": "2026-09-23T10:00:00Z"}
-        reopened = {"schema": "problem/v1", "event": "reopened", "issue": 12, "by": "alice", "at": "2026-09-24T10:00:00Z"}
-        self.assertEqual(status(PROBLEMS[:1]), "open")
-        self.assertEqual(status(PROBLEMS[:1] + [closed]), "fixed")
-        self.assertEqual(status(PROBLEMS[:1] + [closed, reopened]), "open")
+class Page(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        ds = mini.dataset(Path(cls.tmp.name) / "ds")
+        f, g = "TauCeti.X.f", "TauCeti.Y.g"
+        alice = record(ds, "review", f, person("alice"), "2026-09-21T15:10:00Z", 3, verdict="accept", rationale="Matches Neukirch.")
+        # Made on an earlier version of f: another meaning and local hash.
+        bob = record(ds, "review", f, agent("bob"), "2026-09-20T10:00:00Z", 5, verdict="accept", rationale="Checked.")
+        bob = rekeyed(bob, {"hashes": {"meaning": "0" * 16, "local": "9" * 16}})
+        # Made before ltb-dataset/1, keyed by the old hash: compared with the dataset's legacy hash.
+        dave = record(ds, "review", f, person("dave"), "2026-09-19T10:00:00Z", 4, verdict="accept")
+        dave = rekeyed(dave, {"hashes": {"meaning": "a0a0a0a0a0a0a0a0", "local": "1111111111111111"},
+                              "hasher": {"name": "semantic_hash", "revision": "r", "local": "ltb-local-v1"}})
+        carol = record(ds, "review", g, person("carol"), "2026-09-21T11:00:00Z", 6, verdict="accept")
+        p1 = record(ds, "review", g, person("alice"), "2026-09-22T15:00:00Z", 12, verdict="problem",
+                    problem={"category": "F3"}, rationale="It should be 3.", fix="def g := 3")
+        p2 = record(ds, "review", f, agent("bob"), "2026-09-20T10:00:00Z", 13, verdict="problem",
+                    problem={"category": "naming"}, rationale="The docstring says two.")
+        c1 = record(ds, "challenge", g, person("frank"), "2026-09-23T10:00:00Z", 30, property="`g = 2`", catches="an off-by-one")
+        c2 = record(ds, "challenge", f, person("frank"), "2026-09-23T10:00:00Z", 31, property="`f = 1`", statement="f = 1")
+        cls.records = [
+            alice, bob, dave, carol, status(carol, "withdrawn", person("carol"), "2026-09-21T12:00:00Z"),
+            p1, p2, status(p2, "fixed", person("carol"), "2026-09-21T10:00:00Z", commit="0123abcd4567"),
+            record(ds, "test", g, person("erin"), "2026-09-22T10:00:00Z", 20, test={"name": "TauCeti.Y.g_bad"}, checks="g is 2"),
+            record(ds, "test", f, agent("op", tool="Claude Code"), "2026-09-22T10:00:00Z", 21,
+                   test={"name": "TauCeti.X.f_one"}, checks="f is 1"),
+            record(ds, "test", f, person("erin"), "2026-09-22T10:00:00Z", 22, test={"name": "TauCeti.X.gone"}, checks="renamed since"),
+            c1, c2, status(c2, "met", person("frank"), "2026-09-23T12:00:00Z", test={"name": "TauCeti.X.f_one"}),
+            record(ds, "named", "TauCeti.X.f_one", agent("github-actions[bot]", tool="Tau Ceti roadmap reader"),
+                   "2026-09-20T00:00:00Z", name="The value of f", what="result", about="f is one.",
+                   source={"roadmap": "Functions", "path": "TauCetiRoadmap/Functions/STATUS.md"})]
+        for r in cls.records:
+            assert not rec.validate(r), (r, rec.validate(r))
+        cls.ev = Evidence.resolve(cls.records, ds)
+        cls.out = data(INDEX, cls.ev)["declarations"]
 
-    def test_an_edit_replaces_what_the_report_says(self):
-        updated = dict(PROBLEMS[0], event="updated", why="It should be 4.", at="2026-09-22T16:00:00Z")
-        [report] = problems_by_declaration(INDEX, PROBLEMS[:1] + [updated])["TauCeti.Y.g"]
-        self.assertEqual((report["why"], report["at"], report["issue"]), ("It should be 4.", "2026-09-22T15:00:00Z", 12))
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
 
-    def test_a_report_on_an_earlier_version_says_so(self):
-        found = problems_by_declaration(INDEX, PROBLEMS)
-        self.assertTrue(found["TauCeti.Y.g"][0]["current"])
-        self.assertEqual((found["TauCeti.X.f"][0]["current"], found["TauCeti.X.f"][0]["status"], found["TauCeti.X.f"][0]["closedBy"]),
-                         (False, "fixed", "carol"))
+    def test_marks_are_current_or_on_an_earlier_version(self):
+        marks = {m["by"]: m for m in self.out["TauCeti.X.f"]["marks"]}
+        self.assertEqual({by: (m["current"], m["status"]) for by, m in marks.items()},
+                         {"alice": (True, "current"), "dave": (True, "current"), "bob": (False, "stale")})
+        self.assertEqual(marks["alice"]["url"], f"https://github.com/{SETTINGS['repo']}/issues/3")
+        self.assertEqual(self.out["TauCeti.X.f"]["tally"], {"Reviewed-by": {"people": 2, "ai": 0, "earlier": 1}})
 
-    def test_marks_made_before_the_hash_changed_are_compared_with_the_old_hash(self):
-        # A dataset of ltb-dataset/1 gives each declaration a new meaning hash, and the old one as
-        # `legacy`: a mark holding the old one is current if the old one still matches.
-        index = {**INDEX, "declarations": [{**d, "hash": "new" + d["hash"][3:], "legacy": d["hash"]}
-                                           for d in INDEX["declarations"]]}
-        before = {(m["by"], m["current"]) for m in marks_by_declaration(INDEX, RECORDS)["TauCeti.X.f"]}
-        after = {(m["by"], m["current"]) for m in marks_by_declaration(index, RECORDS)["TauCeti.X.f"]}
-        self.assertEqual(before, after)
-        self.assertIn(("alice", True), after)
-        new_mark = {**RECORDS[0], "hash": index["declarations"][0]["hash"], "by": "dora"}
-        self.assertIn(("dora", True), {(m["by"], m["current"]) for m in marks_by_declaration(index, [new_mark])["TauCeti.X.f"]})
+    def test_a_withdrawn_review_is_not_shown(self):
+        self.assertEqual(self.out["TauCeti.Y.g"]["marks"], [])
 
-    def test_open_reports_come_first(self):
-        again = dict(PROBLEMS[1], issue=14, hash="aaaaaaaaaaaa", at="2026-09-19T10:00:00Z")
-        found = problems_by_declaration(INDEX, PROBLEMS + [again])["TauCeti.X.f"]
-        self.assertEqual([(p["issue"], p["status"]) for p in found], [(14, "open"), (13, "fixed")])
+    def test_a_problem_is_open_until_a_status_resolves_it(self):
+        [report] = self.out["TauCeti.Y.g"]["problems"]
+        self.assertEqual((report["status"], report["what"], report["why"], report["fix"], report["issue"]),
+                         ("open", "F3", "It should be 3.", "def g := 3", 12))
+        [fixed] = self.out["TauCeti.X.f"]["problems"]
+        self.assertEqual((fixed["status"], fixed["closedBy"], fixed["commit"], fixed["kind"]), ("fixed", "carol", "0123abcd4567", "agent"))
 
+    def test_a_test_passes_while_it_is_in_tau_ceti_without_sorry(self):
+        f = self.out["TauCeti.X.f"]["tests"]
+        self.assertEqual([(u["statement"], u["passes"]) for u in f["unit"]], [("example : f = 1", True)])
+        self.assertEqual(sorted((r["test"], r["status"], "challenge" in r) for r in f["results"]),
+                         [("TauCeti.X.f_one", "passes", False), ("TauCeti.X.f_one", "passes", True), ("TauCeti.X.gone", "missing", False)])
+        self.assertEqual(f["tally"], {"unit": 1, "results": 2, "suggested": 0})
+        g = self.out["TauCeti.Y.g"]["tests"]
+        self.assertEqual([(r["test"], r["status"]) for r in g["results"]], [("TauCeti.Y.g_bad", "sorry")])
+        self.assertEqual(g["tally"], {"unit": 0, "results": 0, "suggested": 1})
 
-EXAMPLES = [{"statement": "example : TauCeti.X.f = 1", "path": "TauCeti/NumberTheory/X.lean", "line": 8, "url": "u8", "sorry": False,
-             "tests": ["TauCeti.X.f"]},
-            {"statement": "example : TauCeti.X.f + TauCeti.Y.g = 3", "path": "TauCeti/Algebra/Y.lean", "line": 4, "url": "u4", "sorry": True,
-             "tests": ["TauCeti.X.f", "TauCeti.Y.g"]}]
-TESTED = dict(INDEX, examples=EXAMPLES)
-LISTED = [{"schema": "tests/v1", "decl": "TauCeti.X.f", "test": "TauCeti.X.f_one", "checks": "its value is one", "by": "bob", "kind": "agent",
-           "agent": "Codex, session c1", "source": {"issue": 1, "comment": 7}, "at": "2026-09-22T10:00:00Z"},
-          {"schema": "tests/v1", "decl": "TauCeti.X.f", "test": "TauCeti.Gone", "checks": "renamed since", "by": "bob", "kind": "agent",
-           "agent": "Codex, session c1", "source": {"issue": 1, "comment": 7}, "at": "2026-09-22T10:00:00Z"}]
-SUGGESTED = [{"schema": "suggestion/v1", "event": "reported", "issue": 30, "decl": "TauCeti.Y.g", "hash": "cccccccccccc", "tauceti": "c0ffee",
-              "test": "g is two", "catches": "g = 3", "by": "alice", "kind": "person", "agent": "", "at": "2026-09-22T11:00:00Z"}]
+    def test_a_proposed_test_is_open_until_a_declaration_meets_it(self):
+        [met] = self.out["TauCeti.X.f"]["tests"]["suggested"]
+        self.assertEqual((met["status"], met["metBy"], met["statement"], met["closedBy"]), ("written", "TauCeti.X.f_one", "f = 1", "frank"))
+        [proposed] = self.out["TauCeti.Y.g"]["tests"]["suggested"]
+        self.assertEqual((proposed["status"], proposed["test"], proposed["catches"], proposed["issue"]),
+                         ("open", "`g = 2`", "an off-by-one", 30))
 
+    def test_a_named_result_carries_its_name_source_and_coverage(self):
+        found = named(INDEX, self.ev)["declarations"]
+        self.assertEqual(list(found), ["TauCeti.X.f_one"])
+        entry = found["TauCeti.X.f_one"]
+        self.assertEqual((entry["name"], entry["what"], entry["about"]), ("The value of f", "result", "f is one."))
+        self.assertEqual(entry["sources"][0]["source"], {"roadmap": "Functions", "path": "TauCetiRoadmap/Functions/STATUS.md"})
+        # It rests on itself and f: f has a current review by a person, f_one none.
+        self.assertEqual(entry["coverage"], {"members": 2, "people": 1, "any": 1, "problems": 0, "upstream": 0})
 
-class Tests(unittest.TestCase):
-    """What a declaration is tested by: its unit tests, listed key results and suggested tests."""
+    def test_the_page_opens_the_evidence_forms_filled_in(self):
+        html = page(INDEX, SETTINGS, data(INDEX, self.ev), named(INDEX, self.ev)["declarations"])
+        for template in ("evidence-review.yml", "evidence-challenge.yml", "evidence-problem.yml", "evidence-test.yml"):
+            self.assertIn(f"'{template}'", html)
+        self.assertIn("decl: name, commit: SETTINGS.tauceti", html)
+        self.assertIn("4 declarations in 2 modules · 1 named · 3 reviews · 1 open problem", html)
+        self.assertIn('"repo": "LeanTrustBuilders/reviewed-by-pilot"', html)
 
-    def test_examples_that_name_a_declaration_are_its_unit_tests(self):
-        found = tests_by_declaration(TESTED, [], [])
-        self.assertEqual([(t["line"], t["passes"]) for t in found["TauCeti.X.f"]["unit"]], [(8, True), (4, False)])
-        self.assertEqual([t["line"] for t in found["TauCeti.Y.g"]["unit"]], [4])
-
-    def test_a_listed_result_passes_while_it_is_in_tau_ceti(self):
-        results = tests_by_declaration(TESTED, LISTED, [])["TauCeti.X.f"]["results"]
-        self.assertEqual([(r["test"], r["status"], r["statement"]) for r in results],
-                         [("TauCeti.X.f_one", "passes", "lemma f_one : f = 1"), ("TauCeti.Gone", "missing", "")])
-
-    def test_a_suggested_test_is_listed_until_it_is_written(self):
-        closed = {"schema": "suggestion/v1", "event": "closed", "issue": 30, "resolution": "written", "by": "carol", "at": "2026-09-23T10:00:00Z"}
-        self.assertEqual(tests_by_declaration(TESTED, [], SUGGESTED)["TauCeti.Y.g"]["suggested"][0]["status"], "open")
-        self.assertEqual(tests_by_declaration(TESTED, [], SUGGESTED + [closed])["TauCeti.Y.g"]["suggested"][0]["status"], "written")
-
-    def test_the_counts_are_of_passing_tests_and_open_suggestions(self):
-        found = tests_by_declaration(TESTED, LISTED, SUGGESTED)
-        self.assertEqual(found["TauCeti.X.f"]["tally"], {"unit": 1, "results": 1, "suggested": 0})
-        self.assertEqual(found["TauCeti.Y.g"]["tally"], {"unit": 0, "results": 0, "suggested": 1})
-
-    def test_the_marks_file_carries_the_tests(self):
-        out = data(TESTED, RECORDS, (), LISTED, SUGGESTED)
-        self.assertEqual(out["declarations"]["TauCeti.X.f"]["tests"]["tally"], {"unit": 1, "results": 1, "suggested": 0})
-        self.assertEqual(out["declarations"]["TauCeti.Y.g"]["marks"], [])
-
-    def test_suggest_a_test_fills_in_the_declaration_and_the_version_shown(self):
-        query = parse_qs(urlparse(suggest_link("CBirkbeck/test", INDEX["declarations"][0])).query)
-        self.assertEqual((query["template"], query["declaration"], query["version"]), (["test.yml"], ["TauCeti.X.f"], ["aaaaaaaaaaaa"]))
-
-
-class Marks(unittest.TestCase):
-    def test_marks_on_an_earlier_version_are_stale(self):
-        marks = marks_by_declaration(INDEX, RECORDS)["TauCeti.X.f"]
-        self.assertEqual([(m["trailer"], m["current"]) for m in marks], [("Reviewed-by", True), ("Reviewed-by", False)])
-
-    def test_a_mark_of_a_kind_no_longer_used_is_not_shown(self):
-        retired = dict(RECORDS[0], trailer="Acked-by", by="dave")
-        marks = marks_by_declaration(INDEX, RECORDS + [retired])["TauCeti.X.f"]
-        self.assertEqual([m["by"] for m in marks], ["alice", "bob"])
-
-    def test_the_marks_file_lists_only_declarations_with_marks(self):
-        out = data(INDEX, RECORDS)
-        self.assertEqual(list(out["declarations"]), ["TauCeti.X.f"])
-        entry = out["declarations"]["TauCeti.X.f"]
-        self.assertEqual(entry["hash"], "aaaaaaaaaaaa")
-        self.assertEqual([(m["trailer"], m["current"], m["issue"]) for m in entry["marks"]], [("Reviewed-by", True, 3), ("Reviewed-by", False, 5)])
-
-    def test_the_marks_file_counts_people_and_ai_agents_for_each_mark(self):
-        entry = data(INDEX, RECORDS)["declarations"]["TauCeti.X.f"]
-        self.assertEqual(entry["tally"], {"Reviewed-by": {"people": 1, "ai": 0, "earlier": 1}})
-
-    def test_the_marks_file_carries_the_problem_reports_too(self):
-        out = data(INDEX, RECORDS, PROBLEMS)
-        self.assertEqual(list(out["declarations"]), ["TauCeti.X.f", "TauCeti.Y.g"])
-        self.assertEqual(out["declarations"]["TauCeti.Y.g"]["marks"], [])
-        self.assertEqual([(p["issue"], p["status"], p["why"]) for p in out["declarations"]["TauCeti.Y.g"]["problems"]],
-                         [(12, "open", "It should be 3.")])
-        self.assertEqual([p["status"] for p in out["declarations"]["TauCeti.X.f"]["problems"]], ["fixed"])
+    def test_settings_cannot_close_the_script(self):
+        html = page(INDEX, dict(SETTINGS, repo="</script><script>alert(1)</script>"), {"declarations": {}}, {})
+        self.assertNotIn("</script><script>alert(1)", html)
 
 
-class Search(unittest.TestCase):
+class Origins(unittest.TestCase):
+    def test_the_issue_of_a_record_is_read_from_its_origin(self):
+        self.assertEqual(issue_of("o/r#12"), ("o/r", 12))
+        self.assertEqual(issue_of("o/r#12/event/5"), ("o/r", 12))
+        self.assertEqual(issue_of("https://github.com/o/r/issues/7#issuecomment-99/line/2"), ("o/r", 7))
+        self.assertEqual(issue_of(""), ("", None))
+
+
+class Index(unittest.TestCase):
     def test_every_declaration_is_a_row_of_the_search_index(self):
         found = search_index(INDEX)
         self.assertEqual(found["modules"], ["TauCeti.NumberTheory.X", "TauCeti.Algebra.Y"])
         keywords = found["keywords"]
-        self.assertEqual([(row[0], keywords[row[1]], found["modules"][row[2]], row[3]) for row in found["rows"]],
+        self.assertEqual([(row[0], keywords[row[1]], found["modules"][row[2]], row[3]) for row in found["rows"]][:3],
                          [("TauCeti.X.f", "abbrev", "TauCeti.NumberTheory.X", 3), ("TauCeti.X.f_one", "lemma", "TauCeti.NumberTheory.X", 6),
                           ("TauCeti.Y.g", "def", "TauCeti.Algebra.Y", 1)])
 
@@ -184,49 +146,6 @@ class Search(unittest.TestCase):
         self.assertEqual([d["name"] for d in found[0]["declarations"]], ["TauCeti.X.f", "TauCeti.X.f_one"])
         self.assertEqual(found[0]["declarations"][0]["source"], "abbrev f := 1")
         self.assertEqual(found[0]["summary"], "About X.")
-
-
-NAMED = [{"decl": "TauCeti.X.f", "name": "The function f", "what": "definition", "about": "it is one.",
-          "source": {"roadmap": "Functions", "path": "TauCetiRoadmap/Functions/STATUS.md"}}]
-ANNOUNCED = [{"schema": "named/v1", "decl": "TauCeti.X.f_one", "name": "The value of f", "what": "result", "about": "f is one.",
-              "source": {"voyager": 614, "prs": [7001]}, "at": "2026-09-22T10:00:00Z", "by": "voyager", "kind": "agent", "agent": "Voyager"}]
-
-
-class Named(unittest.TestCase):
-    def test_the_named_file_carries_each_name_its_sentence_and_its_sources(self):
-        out = named(INDEX, NAMED, ANNOUNCED)
-        self.assertEqual(sorted(out["declarations"]), ["TauCeti.X.f", "TauCeti.X.f_one"])
-        entry = out["declarations"]["TauCeti.X.f"]
-        self.assertEqual((entry["name"], entry["what"], entry["about"]), ("The function f", "definition", "it is one."))
-        self.assertEqual(out["declarations"]["TauCeti.X.f_one"]["sources"][0]["source"]["prs"], [7001])
-
-    def test_a_file_has_a_page_of_its_own(self):
-        self.assertEqual(module_link("CBirkbeck/test", INDEX["modules"][0], "https://example.org/reviews/"),
-                         "https://example.org/reviews/#m=TauCeti.NumberTheory.X")
-
-    def test_the_page_counts_the_named_declarations_and_offers_their_tab(self):
-        html = page(INDEX, RECORDS, SETTINGS, (), NAMED + [dict(NAMED[0], decl="TauCeti.Y.g")])
-        self.assertIn("2 named", html)
-        self.assertIn('data-group="named"', html)
-
-
-class Page(unittest.TestCase):
-    def test_the_page_carries_its_settings_and_counts(self):
-        html = page(INDEX, RECORDS, SETTINGS)
-        self.assertIn('"repo": "CBirkbeck/test"', html)
-        self.assertIn("3 declarations", html)
-        self.assertIn("c0ffee1", html)
-        self.assertIn('id="search"', html)
-
-    def test_the_page_counts_open_problems_and_can_filter_them(self):
-        html = page(INDEX, RECORDS, SETTINGS, PROBLEMS)
-        self.assertIn("1 open problem", html)
-        self.assertIn('<option value="problem">', html)
-        self.assertIn('<option value="tested">', html)
-
-    def test_settings_cannot_close_the_script(self):
-        html = page(INDEX, RECORDS, dict(SETTINGS, repo="</script><script>alert(1)</script>"))
-        self.assertNotIn("</script><script>alert(1)", html)
 
 
 if __name__ == "__main__":

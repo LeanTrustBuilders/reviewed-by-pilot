@@ -27,14 +27,27 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fetch_declarations import read_clone  # noqa: E402
-from reviews import count_text, test_count_text  # noqa: E402
+from lean_source import read_clone  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 LINK_TEXT = "Reviews and tests of this file"
 DECL_LINK_TEXT = "Who and which"
 MARK_LINE = re.compile(r"^(?:Reviewed-by|Tested by):.*$")
 LINK_LINE = re.compile(r"^\[(?:" + LINK_TEXT + "|" + DECL_LINK_TEXT + r")\]\(\S+\)\s*$")
+
+
+def count_text(people: int, ai: int) -> str:
+    """'3 people and 2 AI agents', '1 person', '1 AI agent'."""
+    parts = ([f"{people} {'person' if people == 1 else 'people'}"] if people else []) + (
+        [f"{ai} AI agent{'' if ai == 1 else 's'}"] if ai else [])
+    return " and ".join(parts) or "nobody"
+
+
+def test_count_text(unit: int, results: int) -> str:
+    """'2 unit tests and 3 key results', '1 unit test', '1 key result'."""
+    parts = ([f"{unit} unit test{'' if unit == 1 else 's'}"] if unit else []) + (
+        [f"{results} key result{'' if results == 1 else 's'}"] if results else [])
+    return " and ".join(parts)
 
 
 def lines_for(entry: dict, name: str = "", site: str = "") -> list:
@@ -164,7 +177,7 @@ def write_counts(lines: list, item: dict, entry: dict, site: str = "") -> list:
 
 def apply_to_checkout(root: Path, reviews: dict, site: str, index: dict | None = None) -> dict:
     """Write the lines into every module of the checkout. Returns what changed."""
-    index = index or read_clone(root, "HEAD")
+    index = index or read_clone(root)
     entries = reviews.get("declarations", {})
     everything, with_counts = {}, {}
     for item in index["declarations"]:

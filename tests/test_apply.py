@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from apply import apply_to_checkout, commit_message  # noqa: E402
+from apply import apply_to_checkout, commit_message, count_text  # noqa: E402
 
 SITE = "https://example.org/reviews/"
 SOURCE = '''/-
@@ -108,6 +108,12 @@ class Apply(unittest.TestCase):
 
 
 class Message(unittest.TestCase):
+    def test_counts_read_as_a_sentence(self):
+        self.assertEqual(count_text(3, 2), "3 people and 2 AI agents")
+        self.assertEqual(count_text(1, 0), "1 person")
+        self.assertEqual(count_text(0, 1), "1 AI agent")
+        self.assertEqual(count_text(0, 0), "nobody")
+
     def test_the_commit_ends_in_one_trailer_per_mark(self):
         reviews = {"declarations": {"TauCeti.vonMangoldt": {"hash": "aaaaaaaaaaaa", "marks": [
             {"trailer": "Reviewed-by", "by": "alice", "kind": "person", "agent": "", "hash": "aaaaaaaaaaaa", "current": True},
