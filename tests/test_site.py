@@ -70,6 +70,18 @@ class Problems(unittest.TestCase):
         self.assertEqual((found["TauCeti.X.f"][0]["current"], found["TauCeti.X.f"][0]["status"], found["TauCeti.X.f"][0]["closedBy"]),
                          (False, "fixed", "carol"))
 
+    def test_marks_made_before_the_hash_changed_are_compared_with_the_old_hash(self):
+        # A dataset of ltb-dataset/1 gives each declaration a new meaning hash, and the old one as
+        # `legacy`: a mark holding the old one is current if the old one still matches.
+        index = {**INDEX, "declarations": [{**d, "hash": "new" + d["hash"][3:], "legacy": d["hash"]}
+                                           for d in INDEX["declarations"]]}
+        before = {(m["by"], m["current"]) for m in marks_by_declaration(INDEX, RECORDS)["TauCeti.X.f"]}
+        after = {(m["by"], m["current"]) for m in marks_by_declaration(index, RECORDS)["TauCeti.X.f"]}
+        self.assertEqual(before, after)
+        self.assertIn(("alice", True), after)
+        new_mark = {**RECORDS[0], "hash": index["declarations"][0]["hash"], "by": "dora"}
+        self.assertIn(("dora", True), {(m["by"], m["current"]) for m in marks_by_declaration(index, [new_mark])["TauCeti.X.f"]})
+
     def test_open_reports_come_first(self):
         again = dict(PROBLEMS[1], issue=14, hash="aaaaaaaaaaaa", at="2026-09-19T10:00:00Z")
         found = problems_by_declaration(INDEX, PROBLEMS + [again])["TauCeti.X.f"]

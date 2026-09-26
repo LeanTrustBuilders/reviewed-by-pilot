@@ -71,6 +71,8 @@ def read(dataset: Dataset, clone: Path, commit: str) -> dict:
             "name": d.name, "kind": kind, "keyword": keyword, "module": d.module, "path": path,
             "line": start, "end": end, "doc": doc, "source": shown,
             "hash": d.meaning or fingerprint(shown), "local": d.local, "content": d.content,
+            # ltb-dataset/1: the meaning hash of ltb-dataset/0, which marks made before hold.
+            "legacy": d.legacy_meaning,
             "text_hash": fingerprint(shown), "package": d.package,
             "sorry": bool(axioms.get("sorry", False)),
             "url": f"https://github.com/{UPSTREAM}/blob/{commit}/{path}#L{start}-L{end}"})

@@ -72,13 +72,20 @@ def problem_link(repo: str, item: dict) -> str:
     return f"https://github.com/{repo}/issues/new?{query}"
 
 
+def current_hashes(index: dict) -> dict:
+    """Each declaration's current versions: its meaning hash and, from a dataset of ltb-dataset/1,
+    the meaning hash of ltb-dataset/0 it also carries (`legacy`). A mark or report made before the
+    datasets' hash changed holds the old kind, and is compared with it."""
+    return {item["name"]: {h for h in (item["hash"], item.get("legacy")) if h} for item in index["declarations"]}
+
+
 def problems_by_declaration(index: dict, events: list) -> dict:
     """Each declaration's problem reports, open ones first, then the newest first."""
-    current = {item["name"]: item["hash"] for item in index["declarations"]}
+    current = current_hashes(index)
     found = defaultdict(list)
     for report in reports(events).values():
         if report["decl"] in current:
-            found[report["decl"]].append({**report, "current": report["hash"] == current[report["decl"]]})
+            found[report["decl"]].append({**report, "current": report["hash"] in current[report["decl"]]})
     for items in found.values():
         items.sort(key=lambda p: p["at"], reverse=True)
         items.sort(key=lambda p: p["status"] != "open")
@@ -86,11 +93,11 @@ def problems_by_declaration(index: dict, events: list) -> dict:
 
 
 def marks_by_declaration(index: dict, records: list) -> dict:
-    current = {item["name"]: item["hash"] for item in index["declarations"]}
+    current = current_hashes(index)
     marks = defaultdict(list)
     for record in records:
         if record["decl"] in current and record["trailer"] in MEANING:
-            marks[record["decl"]].append({**record, "current": record["hash"] == current[record["decl"]]})
+            marks[record["decl"]].append({**record, "current": record["hash"] in current[record["decl"]]})
     for items in marks.values():
         items.sort(key=lambda m: (not m["current"], list(MEANING).index(m["trailer"]), m["kind"] == "agent", m["at"]))
     return marks

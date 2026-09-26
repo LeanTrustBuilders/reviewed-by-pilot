@@ -176,7 +176,7 @@ def make_record(mark: dict, index: dict, login: str, source: dict, at: str):
     record = {"schema": "reviewed-by/v1", "decl": item["name"], "hash": mark["version"] or item["hash"], "tauceti": index["tauceti"],
               "trailer": mark["trailer"], "by": login, "kind": mark["kind"], "agent": mark["agent"], "evidence": mark["evidence"],
               "source": source, "at": at}
-    if record["hash"] != item["hash"]:
+    if record["hash"] not in (item["hash"], item.get("legacy")):
         record["stale"] = True
     return record, None
 
