@@ -14,9 +14,7 @@ Writes data/declarations.json, which the page is built from:
 - `hash` is the declaration's **meaning hash** (S1), which a review is keyed by: it stays current
   until the meaning of the declaration or of anything it rests on changes (the page shows it as the
   version; whether a review still applies is evidence-core's to say);
-- the modules, with their docstrings, are the dataset's (`modules.jsonl`);
-- the `example`s that serve as unit tests are the dataset's `examples` facet, which the extractor's
-  `scripts/examples.py` adds from the sources (an `example` is not kept in the compiled library).
+- the modules, with their docstrings, are the dataset's (`modules.jsonl`).
 """
 from __future__ import annotations
 
@@ -61,25 +59,15 @@ def read(dataset: Dataset, clone: Path, commit: str) -> dict:
             "name": d.name, "kind": kind, "keyword": keyword, "module": d.module, "path": src["path"],
             "line": start, "end": end, "doc": doc, "source": split_statement(text)[0] if kind == "theorem" else text,
             "hash": d.meaning, "url": f"https://github.com/{UPSTREAM}/blob/{commit}/{src['path']}#L{start}-L{end}"})
-    # Modules, from the dataset; examples, from its `examples` facet.
+    # Modules, from the dataset.
     count = {}
     for item in found:
         count[item["module"]] = count.get(item["module"], 0) + 1
     modules = [{"module": m["name"], "path": m.get("path", ""), "doc": "\n\n".join(m.get("doc") or []),
                 "url": f"https://github.com/{UPSTREAM}/blob/{commit}/{m.get('path', '')}",
                 "declarations": count.get(m["name"], 0)} for m in dataset.modules]
-    by_example: dict[tuple, dict] = {}
-    for name, rows in dataset.facet("examples").items():
-        for row in rows:
-            for ex in row.get("examples", []):
-                key = (ex["path"], ex["line"])
-                e = by_example.setdefault(key, {"path": ex["path"], "line": ex["line"], "end": ex["end"],
-                                                "statement": ex["statement"], "sorry": ex["sorry"], "tests": [],
-                                                "url": f"https://github.com/{UPSTREAM}/blob/{commit}/{ex['path']}#L{ex['line']}-L{ex['end']}"})
-                e["tests"].append(name)
-    examples = [by_example[k] for k in sorted(by_example)]
     return {"tauceti": commit, "read": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "modules": modules, "declarations": found, "examples": examples,
+            "modules": modules, "declarations": found,
             "dataset": {"commit": dataset.commit, "producer": dataset.producer(),
                         "toolchain": dataset.toolchain, "hasher": dataset.hasher,
                         "counts": dataset.meta.get("counts", {}),
@@ -99,8 +87,8 @@ def main() -> int:
         print(f"warning: the checkout is at {head[:10]}, the dataset at {dataset.commit[:10]}", file=sys.stderr)
     out = read(dataset, args.clone, commit)
     (ROOT / "data" / "declarations.json").write_text(json.dumps(out, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"{len(out['declarations'])} declarations (from the dataset) and {len(out['examples'])} examples "
-          f"from {len(out['modules'])} modules at {commit[:7]}")
+    print(f"{len(out['declarations'])} declarations (from the dataset) from {len(out['modules'])} modules "
+          f"at {commit[:7]}")
     return 0
 
 

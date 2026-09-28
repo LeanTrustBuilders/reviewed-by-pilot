@@ -81,13 +81,12 @@ class Page(unittest.TestCase):
 
     def test_a_test_passes_while_it_is_in_tau_ceti_without_sorry(self):
         f = self.out["TauCeti.X.f"]["tests"]
-        self.assertEqual([(u["statement"], u["passes"]) for u in f["unit"]], [("example : f = 1", True)])
         self.assertEqual(sorted((r["test"], r["status"], "challenge" in r) for r in f["results"]),
                          [("TauCeti.X.f_one", "passes", False), ("TauCeti.X.f_one", "passes", True), ("TauCeti.X.gone", "missing", False)])
-        self.assertEqual(f["tally"], {"unit": 1, "results": 2, "suggested": 0})
+        self.assertEqual(f["tally"], {"results": 2, "suggested": 0})
         g = self.out["TauCeti.Y.g"]["tests"]
         self.assertEqual([(r["test"], r["status"]) for r in g["results"]], [("TauCeti.Y.g_bad", "sorry")])
-        self.assertEqual(g["tally"], {"unit": 0, "results": 0, "suggested": 1})
+        self.assertEqual(g["tally"], {"results": 0, "suggested": 1})
 
     def test_a_proposed_test_is_open_until_a_declaration_meets_it(self):
         [met] = self.out["TauCeti.X.f"]["tests"]["suggested"]

@@ -20,7 +20,7 @@ a pinned commit, and every review, test, problem and name is an issue of this re
 | forms and the bot | `reviewed-by.yml`, `problem.yml`, `test.yml` and `scripts/reviews.py` | the forms and intake of [evidence-store](https://github.com/LeanTrustBuilders/evidence-store), set up by `evidence-store init` |
 | storage | ledgers `reviews/*.jsonl`, one format each | the **evidence store** [`evidence/`](evidence/): records of spec [S3](https://github.com/LeanTrustBuilders/specs/blob/main/S3-evidence.md), append-only, each change checked |
 | what applies now | computed by the page's script | [evidence-core](https://github.com/LeanTrustBuilders/evidence-core): whether a review is current, a problem open, a test passing, a proposed test met, and how much of what a named result rests on is reviewed |
-| unit tests | the `example`s, found by regular expressions | the dataset's `examples` facet, which the extractor's `examples.py` reads from the sources |
+| unit tests | the `example`s, found by regular expressions | none: an `example` that names a declaration need not test it |
 | proposed tests | suggestion issues | S3 **challenges**: a property the declaration should have, open until a declaration of Tau Ceti proves it |
 | named results | a file of the roadmaps' names, and a ledger of Voyager's | S3 `named` records by the roadmap reader and by Voyager, AI agents like any other |
 
@@ -75,8 +75,7 @@ people's.
   since* if it reads the same but a definition under it moved. A renamed declaration keeps its
   reviews. Reviews made before the rule `ltb-meaning/1` are compared with the hash they were made
   with, which the dataset keeps as `legacy`.
-- **Tests**: the unit tests (the `example`s of Tau Ceti whose statement names the declaration), the
-  key results listed as tests, and the proposed tests met by a declaration. A test passes while it is
+- **Tests**: the key results listed as tests, and the proposed tests met by a declaration. A test passes while it is
   in Tau Ceti at the pinned commit without `sorry`: Lean checks it at every commit, so it does not go
   stale as a review does. The proposed tests still open are listed with them.
 - **Problems**, open ones first, each with its issue and how it was resolved.
@@ -91,7 +90,7 @@ people's.
 1. **[Follow Tau Ceti](.github/workflows/refresh.yml)**, daily: moves the pin in
    `data/settings.json` to the newest commit of main that the extractor has a release for and Tau
    Ceti's cache has built; runs **[Dataset](.github/workflows/dataset.yml)** for it, which fetches
-   Tau Ceti and Mathlib from their caches, runs trust-extract and `examples.py`, and publishes the
+   Tau Ceti and Mathlib from their caches, runs trust-extract, and publishes the
    dataset as the release `dataset-<commit>` of this repository; then records the named results
    ([`scripts/named.py`](scripts/named.py)): the roadmaps' as they stand today (a name the roadmaps
    drop is withdrawn), and Voyager's announcements whose declaration has reached the pin. Voyager's

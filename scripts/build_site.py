@@ -136,21 +136,15 @@ def problems_from_evidence(index: dict, ev: Evidence) -> dict:
 
 
 def tests_from_evidence(index: dict, ev: Evidence) -> dict:
-    """What each declaration is tested by: its unit tests (Tau Ceti's examples that name it, from
-    the dataset's examples facet), the key results listed as its tests and the challenges met (S3
-    `test` records and met `challenge`s), and the tests proposed for it (S3 challenges). A test
+    """What each declaration is tested by: the key results listed as its tests and the challenges
+    met (S3 `test` records and met `challenge`s), and the tests proposed for it (S3 challenges). A test
     passes while it is in Tau Ceti at the pinned commit without `sorry`; the counts are of tests
     that pass and of proposals still open."""
     items = {item["name"]: item for item in index["declarations"]}
     out = {}
 
     def entry(name):
-        return out.setdefault(name, {"unit": [], "results": [], "suggested": []})
-    for example in index.get("examples", []):
-        for name in example["tests"]:
-            if name in items:
-                entry(name)["unit"].append({"statement": example["statement"], "path": example["path"],
-                                            "line": example["line"], "url": example["url"], "passes": not example["sorry"]})
+        return out.setdefault(name, {"results": [], "suggested": []})
     for name in ev.by_decl:
         if name not in items:
             continue
@@ -168,8 +162,7 @@ def tests_from_evidence(index: dict, ev: Evidence) -> dict:
                 "test": v["text"], "statement": v["statement"], "catches": v["catches"], "modes": v["modes"],
                 **who(v["by"]), "at": v["at"], **closed(v)})
     for tests in out.values():
-        tests["tally"] = {"unit": sum(t["passes"] for t in tests["unit"]),
-                          "results": sum(r["status"] == "passes" for r in tests["results"]),
+        tests["tally"] = {"results": sum(r["status"] == "passes" for r in tests["results"]),
                           "suggested": sum(s["status"] == "open" for s in tests["suggested"])}
     return out
 
@@ -354,7 +347,7 @@ SCRIPT = r"""
 const SETTINGS = JSON.parse(document.getElementById('settings').textContent);
 const $ = id => document.getElementById(id);
 const DEFS = new Set(['def', 'abbrev', 'structure', 'class', 'inductive', 'instance', 'class inductive']);
-const MEANING = {'Reviewed-by': 'it is the intended mathematical notion', 'Tested-by': 'its examples and unit tests check out'};
+const MEANING = {'Reviewed-by': 'it is the intended mathematical notion', 'Tested-by': 'the key results listed as its tests check out'};
 // What a problem report says is wrong: the failure modes of trusting-definitions.md, as the problem form asks.
 const WHAT = {F1: 'A different object', F2: 'A different convention', F3: 'Wrong on edge cases', F4: 'A junk value',
   F5: 'Vacuous or trivial', F6: 'An arbitrary choice', F7: 'Something wrong underneath', F8: 'Drift', F9: 'Less general than the source',
@@ -498,16 +491,13 @@ function byHtml(r) {
 }
 function testCount(t) {
   const parts = [];
-  if (t.unit) parts.push(t.unit + (t.unit === 1 ? ' unit test' : ' unit tests'));
   if (t.results) parts.push(t.results + (t.results === 1 ? ' key result' : ' key results'));
   if (t.suggested) parts.push(t.suggested + ' proposed');
   return parts.join(' · ');
 }
 const PASSES = {passes: '<span class="pass">passes</span>', sorry: '<span class="fail">has sorry</span>', missing: '<span class="fail">not in Tau Ceti at this commit</span>'};
 function testsHtml(tests) {
-  const total = tests.unit.length + tests.results.length + tests.suggested.length;
-  const unit = tests.unit.map(u => '<div class="test"><p class="line">' + PASSES[u.passes ? 'passes' : 'sorry'] + ' · <a href="' + esc(u.url) + '">' +
-    esc(u.path) + ', line ' + esc(u.line) + '</a></p><pre>' + esc(u.statement) + '</pre></div>').join('');
+  const total = tests.results.length + tests.suggested.length;
   const results = tests.results.map(r => '<div class="test"><p class="line">' + (PASSES[r.status] || '') + ' · ' +
     (r.url ? '<a class="mono" href="' + esc(r.url) + '">' + esc(r.test) + '</a>' : '<span class="mono">' + esc(r.test) + '</span>') +
     (r.challenge ? ' · meets a proposed test, by ' : ' · listed by ') + byHtml(r) + '</p>' +
@@ -517,10 +507,9 @@ function testsHtml(tests) {
     ', ' + when(t.at) + (t.issue ? ' · <a href="' + esc(t.url || issueUrl(t.issue)) + '">Issue #' + esc(t.issue) + '</a>' : '') + '</p>' + prose(t.test) +
     (t.statement ? '<pre>' + esc(t.statement) + '</pre>' : '') +
     (t.catches ? '<p class="note">Would catch: ' + esc(t.catches) + '</p>' : '') + '</div>').join('');
-  return '<div class="marks"><span class="mark summary tested" title="What it passes: unit tests and key results in Tau Ceti"><span class="tick" aria-hidden="true">✓</span>' +
+  return '<div class="marks"><span class="mark summary tested" title="What it passes: key results in Tau Ceti listed as its tests"><span class="tick" aria-hidden="true">✓</span>' +
     '<span class="trailer">Tested by</span> <span class="who">' + esc(testCount(tests.tally) || 'nothing that passes yet') + '</span></span></div>' +
     '<details class="which"' + (total <= 3 ? ' open' : '') + '><summary>Which (' + total + ')</summary>' +
-    (unit ? '<p class="head">Unit tests: examples in Tau Ceti that name it</p>' + unit : '') +
     (results ? '<p class="head">Key results listed as tests</p>' + results : '') + (suggested ? '<p class="head">Proposed tests</p>' + suggested : '') + '</details>';
 }
 function namedHtml(name) {
@@ -663,7 +652,7 @@ window.addEventListener('popstate', () => { readHash(); render(); });
   marks = reviews.declarations || {};
   reviewed = new Set(Object.entries(marks).filter(([, e]) => e.marks.some(m => m.current)).map(([name]) => name));
   flagged = new Set(Object.entries(marks).filter(([, e]) => (e.problems || []).some(p => p.status === 'open')).map(([name]) => name));
-  tested = new Set(Object.entries(marks).filter(([, e]) => e.tests && (e.tests.tally.unit || e.tests.tally.results)).map(([name]) => name));
+  tested = new Set(Object.entries(marks).filter(([, e]) => e.tests && e.tests.tally.results).map(([name]) => name));
   lower = index.rows.map(r => r[0].toLowerCase());
   leafLower = lower.map(n => n.slice(n.lastIndexOf('.') + 1));
   area = index.rows.map(r => (index.modules[r[2]].split('.')[1] || index.modules[r[2]]));
@@ -725,7 +714,7 @@ def page(index: dict, settings: dict, reviews: dict, named_decls: dict) -> str:
     <li>Each declaration counts its reviews, people apart from AI agents; <strong>Who</strong> lists them, with dates, versions and evidence.</li>
     <li><strong>Named</strong> shows only the named results and notable definitions: the ones the roadmaps' status files and Voyager's announcements single out, rather than the API and proof steps around them.</li>
   </ol>
-  <p><strong>Tests</strong> are what a declaration passes, rather than a mark: its unit tests (the examples in Tau Ceti that name it), key results listed as its tests with <strong>List a test</strong>, and tests anyone proposes with <strong>Suggest a test</strong>: a property it should have, which stays open until someone proves it in Tau Ceti and comments <code>/met &lt;the declaration that proves it&gt;</code> on its issue (or <code>/failed</code>, if it turns out false: then report the problem). A test passes while it is in Tau Ceti at the pinned commit without <code>sorry</code>. <strong>Which</strong> shows each with its statement.</p>
+  <p><strong>Tests</strong> are what a declaration passes, rather than a mark: key results listed as its tests with <strong>List a test</strong>, and tests anyone proposes with <strong>Suggest a test</strong>: a property it should have, which stays open until someone proves it in Tau Ceti and comments <code>/met &lt;the declaration that proves it&gt;</code> on its issue (or <code>/failed</code>, if it turns out false: then report the problem). A test passes while it is in Tau Ceti at the pinned commit without <code>sorry</code>. <strong>Which</strong> shows each with its statement.</p>
   <p>If a declaration is wrong, press <strong>Report a problem</strong> instead and say why, and how to fix it if you know. The report is the issue for fixing it: it stays open, and the page flags the declaration, until its reporter or a maintainer closes it as completed (fixed) or as not planned (not a problem), or comments <code>/fixed &lt;commit&gt;</code>, <code>/intended</code> or <code>/invalid</code>.</p>
   <p>Marking many at once: comment lines like <code>Reviewed-by: TauCeti.X.y — what you checked</code>, <code>Test: TauCeti.X.y — TauCeti.X.y_zero — what it checks</code> or <code>Named: TauCeti.X.y — its name — a sentence</code> on <a href="{html.escape(bulk)}">issue #{settings['bulk_issue']}</a>. AI agents use the same routes and name the agent, model and session; their marks are shown apart from people's.</p>
   <dl class="legend">{legend}</dl>

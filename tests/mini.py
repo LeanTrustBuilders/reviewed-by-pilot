@@ -29,9 +29,7 @@ INDEX = {"tauceti": COMMIT, "read": "2026-09-21T15:00:00Z",
              {"name": "TauCeti.Y.g", "kind": "def", "keyword": "def", "module": "TauCeti.Algebra.Y", "path": "TauCeti/Algebra/Y.lean",
               "line": 1, "end": 1, "doc": "A map.", "source": "def g := 2", "hash": "cccccccccccccccc", "url": "u3"},
              {"name": "TauCeti.Y.g_bad", "kind": "theorem", "keyword": "theorem", "module": "TauCeti.Algebra.Y", "path": "TauCeti/Algebra/Y.lean",
-              "line": 3, "end": 3, "doc": "", "source": "theorem g_bad : g = 2", "hash": "dddddddddddddddd", "url": "u4"}],
-         "examples": [{"path": "TauCeti/NumberTheory/X.lean", "line": 9, "end": 9, "statement": "example : f = 1", "sorry": False,
-                       "tests": ["TauCeti.X.f"], "url": "u9"}]}
+              "line": 3, "end": 3, "doc": "", "source": "theorem g_bad : g = 2", "hash": "dddddddddddddddd", "url": "u4"}]}
 SETTINGS = {"repo": "LeanTrustBuilders/reviewed-by-pilot", "bulk_issue": 1, "tauceti": COMMIT}
 
 

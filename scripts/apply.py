@@ -43,11 +43,9 @@ def count_text(people: int, ai: int) -> str:
     return " and ".join(parts) or "nobody"
 
 
-def test_count_text(unit: int, results: int) -> str:
-    """'2 unit tests and 3 key results', '1 unit test', '1 key result'."""
-    parts = ([f"{unit} unit test{'' if unit == 1 else 's'}"] if unit else []) + (
-        [f"{results} key result{'' if results == 1 else 's'}"] if results else [])
-    return " and ".join(parts)
+def test_count_text(results: int) -> str:
+    """'3 key results', '1 key result', or nothing."""
+    return f"{results} key result{'' if results == 1 else 's'}" if results else ""
 
 
 def lines_for(entry: dict, name: str = "", site: str = "") -> list:
@@ -57,7 +55,7 @@ def lines_for(entry: dict, name: str = "", site: str = "") -> list:
     found = [f"{trailer}: {count_text(n['people'], n['ai'])}" for trailer, n in (entry.get("tally") or {}).items()
              if n["people"] or n["ai"]]
     tests = (entry.get("tests") or {}).get("tally") or {}
-    counted = test_count_text(tests.get("unit", 0), tests.get("results", 0))
+    counted = test_count_text(tests.get("results", 0))
     found += [f"Tested by: {counted}"] if counted else []
     return found + [f"[{DECL_LINK_TEXT}]({site}#d={name})"] if found and name else found
 

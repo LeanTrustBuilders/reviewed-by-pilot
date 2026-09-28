@@ -34,9 +34,9 @@ end TauCeti
 '''
 REVIEWS = {"declarations": {
     "TauCeti.vonMangoldt": {"tally": {"Reviewed-by": {"people": 2, "ai": 1, "earlier": 0}},
-                            "tests": {"tally": {"unit": 1, "results": 3, "suggested": 0}}},
-    "TauCeti.noDocstring": {"tally": {"Reviewed-by": {"people": 1, "ai": 0, "earlier": 0}}, "tests": {"tally": {"unit": 0, "results": 0, "suggested": 0}}},
-    "TauCeti.vonMangoldt_one": {"tally": {"Reviewed-by": {"people": 0, "ai": 1, "earlier": 0}}, "tests": {"tally": {"unit": 2, "results": 0, "suggested": 0}}}}}
+                            "tests": {"tally": {"results": 3, "suggested": 0}}},
+    "TauCeti.noDocstring": {"tally": {"Reviewed-by": {"people": 1, "ai": 0, "earlier": 0}}, "tests": {"tally": {"results": 0, "suggested": 0}}},
+    "TauCeti.vonMangoldt_one": {"tally": {"Reviewed-by": {"people": 0, "ai": 1, "earlier": 0}}, "tests": {"tally": {"results": 1, "suggested": 0}}}}}
 
 
 class Apply(unittest.TestCase):
@@ -63,7 +63,7 @@ class Apply(unittest.TestCase):
         _, text = self.run_apply()
         self.assertIn("/-- The **ideal von Mangoldt function**.\n\n"
                       "Reviewed-by: 2 people and 1 AI agent\n"
-                      "Tested by: 1 unit test and 3 key results\n"
+                      "Tested by: 3 key results\n"
                       "[Who and which](https://example.org/reviews/#d=TauCeti.vonMangoldt) -/\n"
                       "noncomputable def vonMangoldt", text)
 
@@ -82,7 +82,7 @@ class Apply(unittest.TestCase):
         _, text = self.run_apply()
         self.assertIn("/-- It vanishes at the unit ideal.\n\n"
                       "Reviewed-by: 1 AI agent\n"
-                      "Tested by: 2 unit tests\n"
+                      "Tested by: 1 key result\n"
                       "[Who and which](https://example.org/reviews/#d=TauCeti.vonMangoldt_one) -/\n"
                       "@[simp]\ntheorem vonMangoldt_one", text)
 
@@ -95,7 +95,7 @@ class Apply(unittest.TestCase):
     def test_the_lines_follow_the_marks_when_they_change(self):
         self.run_apply()
         fewer = {"declarations": {"TauCeti.vonMangoldt": {"tally": {"Reviewed-by": {"people": 1, "ai": 0, "earlier": 0}},
-                                                          "tests": {"tally": {"unit": 0, "results": 0, "suggested": 0}}}}}
+                                                          "tests": {"tally": {"results": 0, "suggested": 0}}}}}
         summary, text = self.run_apply(fewer)
         self.assertIn("/-- The **ideal von Mangoldt function**.\n\nReviewed-by: 1 person\n"
                       "[Who and which](https://example.org/reviews/#d=TauCeti.vonMangoldt) -/", text)

@@ -6,8 +6,7 @@ name: Dataset
 # Tau Ceti's modules come from its public Lake cache and Mathlib's from Mathlib's, so little is
 # compiled: only what the cache lacks. A module that does not build is left out, and the dataset
 # says so (library.unavailable). The extractor's action does the rest: the newest trust-extract
-# release for Tau Ceti's toolchain, the `examples` facet (the unit tests the page shows, read from
-# the sources), and the release.
+# release for Tau Ceti's toolchain, and the release.
 on:
   workflow_dispatch:
     inputs:
