@@ -1,4 +1,4 @@
-"""A small dataset (S2, ltb-dataset/1) of three Tau Ceti-like declarations, and records (S3) about
+"""A small dataset (S2, ltb-dataset/2) of three Tau Ceti-like declarations, and records (S3) about
 them, for the tests of the page and of the named results."""
 from __future__ import annotations
 
@@ -42,8 +42,7 @@ def dataset(root: Path) -> Dataset:
     lines = []
     for i, (name, mod, kind, prop, meaning, local, legacy) in enumerate(DECLS):
         lines.append({"id": i, "name": name, "module": mod, "package": "TauCeti", "scope": "project", "kind": kind,
-                      "isProp": prop, "hashes": {"meaning": meaning, "local": local, "content": meaning,
-                                                 "legacy": {"meaning": legacy, "local": local}}})
+                      "isProp": prop, "hashes": {"meaning": meaning, "local": local, "content": meaning}})
     (root / "decls.jsonl").write_text("".join(json.dumps(l) + "\n" for l in lines))
     (root / "edges" / "meaning.bin").write_bytes(b"".join(struct.pack("<ii", s, t) for s, t in EDGES))
     # g_bad is proved with sorry
@@ -52,10 +51,9 @@ def dataset(root: Path) -> Dataset:
         for n, *_ in DECLS))
     (root / "modules.jsonl").write_text("".join(json.dumps({"name": m["module"], "path": m["path"], "doc": [], "imports": []}) + "\n"
                                                 for m in INDEX["modules"]))
-    meta = {"spec": "ltb-dataset/1", "library": {"root": "TauCeti", "commit": COMMIT, "unavailable": []},
+    meta = {"spec": "ltb-dataset/2", "library": {"root": "TauCeti", "commit": COMMIT, "unavailable": []},
             "hasher": {"name": "ltb-meaning/1", "meaning": "ltb-meaning/1", "local": "ltb-local/2",
-                       "content": {"name": "semantic_hash", "revision": "r"},
-                       "legacy": {"name": "semantic_hash", "revision": "r", "local": "ltb-local-v1"}},
+                       "content": "ltb-content/1"},
             "counts": {"nodes": len(DECLS), "project": len(DECLS), "upstream": 0},
             "edges": [{"name": "meaning", "file": "edges/meaning.bin", "format": "i32le-pairs", "count": len(EDGES)}],
             "facets": [{"name": "axioms", "file": "facets/axioms.jsonl", "schema": "axioms/1", "count": len(DECLS)}],

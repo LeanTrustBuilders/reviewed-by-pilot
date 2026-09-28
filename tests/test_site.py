@@ -31,7 +31,7 @@ class Page(unittest.TestCase):
         # Made on an earlier version of f: another meaning and local hash.
         bob = record(ds, "review", f, agent("bob"), "2026-09-20T10:00:00Z", 5, verdict="accept", rationale="Checked.")
         bob = rekeyed(bob, {"hashes": {"meaning": "0" * 16, "local": "9" * 16}})
-        # Made before ltb-dataset/1, keyed by the old hash: compared with the dataset's legacy hash.
+        # Keyed by semantic_hash's hashes (S1 version 0), which datasets no longer carry: incomparable.
         dave = record(ds, "review", f, person("dave"), "2026-09-19T10:00:00Z", 4, verdict="accept")
         dave = rekeyed(dave, {"hashes": {"meaning": "a0a0a0a0a0a0a0a0", "local": "1111111111111111"},
                               "hasher": {"name": "semantic_hash", "revision": "r", "local": "ltb-local-v1"}})
@@ -65,9 +65,9 @@ class Page(unittest.TestCase):
     def test_marks_are_current_or_on_an_earlier_version(self):
         marks = {m["by"]: m for m in self.out["TauCeti.X.f"]["marks"]}
         self.assertEqual({by: (m["current"], m["status"]) for by, m in marks.items()},
-                         {"alice": (True, "current"), "dave": (True, "current"), "bob": (False, "stale")})
+                         {"alice": (True, "current"), "dave": (False, "incomparable"), "bob": (False, "stale")})
         self.assertEqual(marks["alice"]["url"], f"https://github.com/{SETTINGS['repo']}/issues/3")
-        self.assertEqual(self.out["TauCeti.X.f"]["tally"], {"Reviewed-by": {"people": 2, "ai": 0, "earlier": 1}})
+        self.assertEqual(self.out["TauCeti.X.f"]["tally"], {"Reviewed-by": {"people": 1, "ai": 0, "earlier": 2}})
 
     def test_a_withdrawn_review_is_not_shown(self):
         self.assertEqual(self.out["TauCeti.Y.g"]["marks"], [])
