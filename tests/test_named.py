@@ -106,9 +106,11 @@ class Recorded(unittest.TestCase):
     def test_each_roadmap_entry_is_recorded_once(self):
         added, gone = sync_roadmaps(self.store, self.entries, self.ds, "2026-09-25T00:00:00Z")
         self.assertEqual(([r["subject"]["name"] for r in added], gone), (["TauCeti.X.f_one", "TauCeti.Y.g"], []))
-        self.assertEqual((added[0]["name"], added[0]["about"], added[0]["by"]["agent"]["tool"]),
+        self.assertEqual((added[0]["name"], added[0]["text"], added[0]["by"]["agent"]["tool"]),
                          ("The value of f", "f is one.", "Tau Ceti roadmap reader"))
-        self.assertNotIn("about", added[1])
+        self.assertEqual(added[0]["reference"], {"text": "the Functions roadmap", "url":
+                         "https://github.com/TauCetiProject/TauCetiRoadmap/blob/main/TauCetiRoadmap/Functions/STATUS.md"})
+        self.assertNotIn("text", added[1])
         self.store.add(added)
         self.assertEqual(sync_roadmaps(self.store, self.entries, self.ds, "2026-09-26T00:00:00Z"), ([], []))
 
@@ -135,8 +137,8 @@ class Recorded(unittest.TestCase):
         self.assertEqual(add_announcements(entries, [post]), [])
         [r] = sync_voyager(self.store, entries, self.ds)
         self.assertEqual(rec.validate(r), [])
-        self.assertEqual((r["subject"]["name"], r["by"]["agent"]["tool"], r["at"], r["source"]),
-                         ("TauCeti.X.f_one", "Voyager", "2026-09-21T14:13:20Z", {"voyager": 614, "prs": [7001]}))
+        self.assertEqual((r["subject"]["name"], r["by"]["agent"]["tool"], r["at"], r["reference"], r["origin"]["ref"]),
+                         ("TauCeti.X.f_one", "Voyager", "2026-09-21T14:13:20Z", {"text": "Voyager, TauCeti#7001"}, "voyager 614"))
         self.store.add([r])
         self.assertEqual(sync_voyager(self.store, entries, self.ds), [])
 

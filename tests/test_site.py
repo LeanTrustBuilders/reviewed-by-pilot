@@ -27,9 +27,9 @@ class Page(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         ds = mini.dataset(Path(cls.tmp.name) / "ds")
         f, g = "TauCeti.X.f", "TauCeti.Y.g"
-        alice = record(ds, "review", f, person("alice"), "2026-09-21T15:10:00Z", 3, verdict="accept", rationale="Matches Neukirch.")
+        alice = record(ds, "review", f, person("alice"), "2026-09-21T15:10:00Z", 3, verdict="accept", text="Matches Neukirch.")
         # Made on an earlier version of f: another meaning and local hash.
-        bob = record(ds, "review", f, agent("bob"), "2026-09-20T10:00:00Z", 5, verdict="accept", rationale="Checked.")
+        bob = record(ds, "review", f, agent("bob"), "2026-09-20T10:00:00Z", 5, verdict="accept", text="Checked.")
         bob = rekeyed(bob, {"hashes": {"meaning": "0" * 16, "local": "9" * 16}})
         # Keyed by semantic_hash's hashes (S1 version 0), which datasets no longer carry: incomparable.
         dave = record(ds, "review", f, person("dave"), "2026-09-19T10:00:00Z", 4, verdict="accept")
@@ -37,22 +37,22 @@ class Page(unittest.TestCase):
                               "hasher": {"name": "semantic_hash", "revision": "r", "local": "ltb-local-v1"}})
         carol = record(ds, "review", g, person("carol"), "2026-09-21T11:00:00Z", 6, verdict="accept")
         p1 = record(ds, "review", g, person("alice"), "2026-09-22T15:00:00Z", 12, verdict="problem",
-                    problem={"category": "F3"}, rationale="It should be 3.", fix="def g := 3")
+                    category="F3", text="It should be 3.", fix="def g := 3")
         p2 = record(ds, "review", f, agent("bob"), "2026-09-20T10:00:00Z", 13, verdict="problem",
-                    problem={"category": "naming"}, rationale="The docstring says two.")
-        c1 = record(ds, "challenge", g, person("frank"), "2026-09-23T10:00:00Z", 30, property="`g = 2`", catches="an off-by-one")
-        c2 = record(ds, "challenge", f, person("frank"), "2026-09-23T10:00:00Z", 31, property="`f = 1`", statement="f = 1")
+                    category="naming", text="The docstring says two.")
+        c1 = record(ds, "challenge", g, person("frank"), "2026-09-23T10:00:00Z", 30, text="`g = 2`", catches="an off-by-one")
+        c2 = record(ds, "challenge", f, person("frank"), "2026-09-23T10:00:00Z", 31, text="`f = 1`", statement="f = 1")
         cls.records = [
             alice, bob, dave, carol, status(carol, "withdrawn", person("carol"), "2026-09-21T12:00:00Z"),
             p1, p2, status(p2, "fixed", person("carol"), "2026-09-21T10:00:00Z", commit="0123abcd4567"),
-            record(ds, "test", g, person("erin"), "2026-09-22T10:00:00Z", 20, test={"name": "TauCeti.Y.g_bad"}, checks="g is 2"),
+            record(ds, "test", g, person("erin"), "2026-09-22T10:00:00Z", 20, test={"name": "TauCeti.Y.g_bad"}, text="g is 2"),
             record(ds, "test", f, agent("op", tool="Claude Code"), "2026-09-22T10:00:00Z", 21,
-                   test={"name": "TauCeti.X.f_one"}, checks="f is 1"),
-            record(ds, "test", f, person("erin"), "2026-09-22T10:00:00Z", 22, test={"name": "TauCeti.X.gone"}, checks="renamed since"),
+                   test={"name": "TauCeti.X.f_one"}, text="f is 1"),
+            record(ds, "test", f, person("erin"), "2026-09-22T10:00:00Z", 22, test={"name": "TauCeti.X.gone"}, text="renamed since"),
             c1, c2, status(c2, "met", person("frank"), "2026-09-23T12:00:00Z", test={"name": "TauCeti.X.f_one"}),
             record(ds, "named", "TauCeti.X.f_one", agent("github-actions[bot]", tool="Tau Ceti roadmap reader"),
-                   "2026-09-20T00:00:00Z", name="The value of f", what="result", about="f is one.",
-                   source={"roadmap": "Functions", "path": "TauCetiRoadmap/Functions/STATUS.md"})]
+                   "2026-09-20T00:00:00Z", name="The value of f", what="result", text="f is one.",
+                   reference={"text": "the Functions roadmap", "url": "https://example.org/Functions/STATUS.md"})]
         for r in cls.records:
             assert not rec.validate(r), (r, rec.validate(r))
         cls.ev = Evidence.resolve(cls.records, ds)
@@ -101,7 +101,7 @@ class Page(unittest.TestCase):
         self.assertEqual(list(found), ["TauCeti.X.f_one"])
         entry = found["TauCeti.X.f_one"]
         self.assertEqual((entry["name"], entry["what"], entry["about"]), ("The value of f", "result", "f is one."))
-        self.assertEqual(entry["sources"][0]["source"], {"roadmap": "Functions", "path": "TauCetiRoadmap/Functions/STATUS.md"})
+        self.assertEqual(entry["sources"][0]["reference"], {"text": "the Functions roadmap", "url": "https://example.org/Functions/STATUS.md"})
         # It rests on itself and f: f has a current review by a person, f_one none.
         self.assertEqual(entry["coverage"], {"members": 2, "people": 1, "any": 1, "problems": 0, "upstream": 0})
 

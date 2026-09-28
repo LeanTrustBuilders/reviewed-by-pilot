@@ -104,20 +104,31 @@ def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def reference(source: dict) -> dict:
+    """Where an entry's naming comes from, as a record's `reference` (S3): a roadmap's STATUS.md, or
+    Voyager with the pull requests it announced."""
+    if "roadmap" in source:
+        return {"text": f"the {source['roadmap']} roadmap",
+                "url": f"https://github.com/TauCetiProject/TauCetiRoadmap/blob/main/{source['path']}"}
+    prs = ", ".join(f"TauCeti#{n}" for n in source.get("prs", []))
+    return {"text": "Voyager" + (f", {prs}" if prs else "")}
+
+
 def named_record(entry: dict, ds: Dataset, by: dict, at: str, origin: dict) -> dict | None:
     """The `named` record of an entry, keyed in ``ds``; None if the declaration is not there."""
     d = ds.by_name.get(entry["decl"])
     if d is None:
         return None
     r = {"schema": rec.SCHEMA, "kind": "named", "subject": rec.subject_from_decl(d, ds), "by": by, "at": at,
-         "origin": origin, "name": entry["name"], "what": entry["what"], "source": entry["source"]}
+         "origin": origin, "name": entry["name"], "what": entry["what"], "reference": reference(entry["source"])}
     if entry.get("about"):
-        r["about"] = entry["about"]
+        r["text"] = entry["about"]
     return rec.with_id(r)
 
 
 def key(r: dict) -> tuple:
-    return (r["subject"]["name"], r.get("name"), json.dumps(r.get("source"), sort_keys=True))
+    return (r["subject"]["name"], r.get("name"), json.dumps(r.get("reference"), sort_keys=True),
+            (r.get("origin") or {}).get("ref"))
 
 
 def sync_roadmaps(store: Store, entries: list, ds: Dataset, at: str) -> tuple[list, list]:
@@ -137,7 +148,7 @@ def sync_roadmaps(store: Store, entries: list, ds: Dataset, at: str) -> tuple[li
             live[key(r)] = r
             added.append(r)
     gone = [rec.with_id({"schema": rec.SCHEMA, "kind": "status", "target": r["id"], "state": "withdrawn",
-                         "by": ROADMAP_READER, "at": at, "note": "no longer in the roadmap"})
+                         "by": ROADMAP_READER, "at": at, "text": "no longer in the roadmap"})
             for k, r in live.items() if k not in seen and r not in added]
     return added, gone
 

@@ -84,7 +84,7 @@ def marks_from_evidence(index: dict, ev: Evidence) -> dict:
             number, url = issue(v)
             marks[name].append({
                 "trailer": "Reviewed-by", **who(v["by"]), "hash": v["hash"], "current": v["applies"],
-                "status": v["status"], "at": v["at"], "evidence": v["rationale"], "issue": number, "url": url,
+                "status": v["status"], "at": v["at"], "evidence": v["text"], "issue": number, "url": url,
                 "id": v["id"], **({"from": v["renamedFrom"]} if v["renamedFrom"] else {})})
     for items in marks.values():
         items.sort(key=lambda m: (not m["current"], m["kind"] == "agent", m["at"]))
@@ -110,7 +110,7 @@ def closed(v: dict) -> dict:
     if v["state"] in ("open", "stands") or not v["statuses"]:
         return {}
     last = v["statuses"][-1]
-    return {"closedBy": last["by"]["login"], "closedAt": last["at"], "commit": last["commit"], "note": last["note"],
+    return {"closedBy": last["by"]["login"], "closedAt": last["at"], "commit": last["commit"], "note": last["text"],
             **({"metBy": (last["test"] or {}).get("name", "")} if isinstance(last.get("test"), dict) else {})}
 
 
@@ -127,7 +127,7 @@ def problems_from_evidence(index: dict, ev: Evidence) -> dict:
             number, url = issue(v)
             found[name].append({
                 "id": v["id"], "issue": number, "url": url, "status": PROBLEM_STATE.get(v["state"], v["state"]),
-                "what": v["category"] or "other", "why": v["rationale"], "fix": v["fix"], **who(v["by"]),
+                "what": v["category"] or "other", "why": v["text"], "fix": v["fix"], **who(v["by"]),
                 "hash": v["hash"], "current": v["applies"], "at": v["at"], **closed(v)})
     for items in found.values():
         items.sort(key=lambda p: p["at"], reverse=True)
@@ -159,13 +159,13 @@ def tests_from_evidence(index: dict, ev: Evidence) -> dict:
             r = t["record"] if "challenge" not in t else t["met"]
             entry(name)["results"].append({
                 "test": t["test"], "status": t["result"], "statement": test["source"] if test else "",
-                "url": test["url"] if test else "", "checks": t["checks"], **who(by_view(r.get("by", {}))),
+                "url": test["url"] if test else "", "checks": t["text"], **who(by_view(r.get("by", {}))),
                 "at": r.get("at", ""), **({"challenge": t["challenge"]["id"]} if "challenge" in t else {})})
         for v in views_on(ev, name, "challenge"):
             number, url = issue(v)
             entry(name)["suggested"].append({
                 "id": v["id"], "issue": number, "url": url, "status": CHALLENGE_STATE.get(v["state"], v["state"]),
-                "test": v["property"], "statement": v["statement"], "catches": v["catches"], "modes": v["modes"],
+                "test": v["text"], "statement": v["statement"], "catches": v["catches"], "modes": v["modes"],
                 **who(v["by"]), "at": v["at"], **closed(v)})
     for tests in out.values():
         tests["tally"] = {"unit": sum(t["passes"] for t in tests["unit"]),
@@ -190,8 +190,8 @@ def named_from_evidence(index: dict, ev: Evidence) -> dict:
         first = records[0]
         people = coverage_of(ev, name, Policy())
         anyone = coverage_of(ev, name, Policy(agents=True))
-        out[name] = {"name": first.get("name", ""), "what": first.get("what", "result"), "about": first.get("about", ""),
-                     "sources": [{"source": r.get("source") or {}, **{k: who(by_view(r.get("by", {})))[k] for k in ("by", "agent")},
+        out[name] = {"name": first.get("name", ""), "what": first.get("what", "result"), "about": first.get("text", ""),
+                     "sources": [{"reference": r.get("reference") or {}, **{k: who(by_view(r.get("by", {})))[k] for k in ("by", "agent")},
                                   "at": r.get("at", "")} for r in records],
                      "coverage": {"members": len(people.members), "people": len(people.covered),
                                   "any": len(anyone.covered), "problems": len(people.with_problems),
@@ -527,14 +527,14 @@ function namedHtml(name) {
   const named = namedOf[name];
   if (!named) return '';
   const from = named.sources.map(s => {
-    if (s.source && s.source.roadmap) {
-      return 'the <a href="https://github.com/TauCetiProject/TauCetiRoadmap/blob/main/' + esc(s.source.path) + '">' + esc(s.source.roadmap) + '</a> roadmap';
+    const ref = s.reference || {};
+    // a roadmap links its STATUS.md; Voyager names the pull requests it announced
+    if (ref.text && ref.url) return '<a href="' + esc(ref.url) + '">' + esc(ref.text) + '</a>';
+    if (ref.text) {
+      return esc(ref.text).replace(/TauCeti#(\d+)/g, '<a href="https://github.com/TauCetiProject/TauCeti/pull/$1">TauCeti#$1</a>') +
+        (s.agent === 'Voyager' && s.at ? ', ' + when(s.at) : '');
     }
-    if (s.source && s.source.voyager) {
-      const prs = (s.source.prs || []).map(n => '<a href="https://github.com/TauCetiProject/TauCeti/pull/' + n + '">TauCeti#' + n + '</a>').join(', ');
-      return 'Voyager' + (prs ? ', ' + prs : '') + (s.at ? ', ' + when(s.at) : '');
-    }
-    if (s.source && s.source.url) return '<a href="' + esc(s.source.url) + '">' + esc(s.agent || ('@' + s.by)) + '</a>';
+    if (ref.url) return '<a href="' + esc(ref.url) + '">' + esc(s.agent || ('@' + s.by)) + '</a>';
     return s.agent ? esc(s.agent) + (s.by ? ' via @' + esc(s.by) : '') : esc(s.by ? '@' + s.by : 'a reader');
   });
   const c = named.coverage;
