@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Build the page of Tau Ceti declarations and what is known of each: reviews, tests, problems.
+"""Build the page of a library's declarations and what is known of each: reviews, tests, problems.
 
-  python3 scripts/build_site.py --dataset DIR
+  python3 scripts/build_site.py --dataset DIR [--store DIR] [--settings FILE] [--index FILE] [--out DIR]
+
+The library is `settings["library"]`: its `name` (Tau Ceti), `repo`, and optionally `title` (what
+the page is about, default the name), `root` (the namespace names are shown under, for examples) and
+`named_from` (where its named results come from). The store's repository, whose issue forms the
+buttons open, is `settings["repo"]`, and `settings["bulk_issue"]` its bulk issue, if any.
 
 The page (Reviewed-by's, kept as it was) is fed by the LeanTrustBuilders suite:
 
@@ -20,7 +25,7 @@ It writes site/:
 - data/search.json, one row per declaration (name, keyword, module, line), which the page loads
   first; data/docs.json, each declaration's docstring in one sentence, which it loads next;
 - data/m/<n>.json, each module's declarations in full, read when one is opened;
-- reviews.json, for other readers too (the atlas, Tau Ceti's docs): each declaration's current
+- reviews.json, for other readers too: each declaration's current
   version, how many people and AI agents reviewed it, every review, the tests it passes, the tests
   proposed for it, and every problem reported with it;
 - named.json, the named results and notable definitions, with the coverage of what they rest on.
@@ -138,7 +143,7 @@ def problems_from_evidence(index: dict, ev: Evidence) -> dict:
 def tests_from_evidence(index: dict, ev: Evidence) -> dict:
     """What each declaration is tested by: the key results listed as its tests and the challenges
     met (S3 `test` records and met `challenge`s), and the tests proposed for it (S3 challenges). A test
-    passes while it is in Tau Ceti at the pinned commit without `sorry`; the counts are of tests
+    passes while it is in the library at the pinned commit without `sorry`; the counts are of tests
     that pass and of proposals still open."""
     items = {item["name"]: item for item in index["declarations"]}
     out = {}
@@ -208,7 +213,7 @@ def search_index(index: dict) -> dict:
     column = {keyword: n for n, keyword in enumerate(keywords)}
     rows = [[item["name"], column[item.get("keyword", item["kind"])], position[item["module"]], item.get("line", 0)]
             for item in index["declarations"] if item["module"] in position]
-    return {"tauceti": index["tauceti"], "read": index["read"], "modules": modules, "keywords": keywords, "rows": rows}
+    return {"commit": index["commit"], "read": index["read"], "modules": modules, "keywords": keywords, "rows": rows}
 
 
 def module_summary(doc: str) -> str:
@@ -229,7 +234,7 @@ def shards(index: dict) -> dict:
 
 
 def named(index: dict, ev: Evidence) -> dict:
-    return {"schema": "named/v1", "tauceti": index["tauceti"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    return {"schema": "named/v1", "commit": index["commit"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "declarations": named_from_evidence(index, ev)}
 
 
@@ -238,7 +243,7 @@ def data(index: dict, ev: Evidence) -> dict:
     found = problems_from_evidence(index, ev)
     tests = tests_from_evidence(index, ev)
     by_name = {item["name"]: item for item in index["declarations"]}
-    return {"schema": "reviewed-by/v1", "tauceti": index["tauceti"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    return {"schema": "reviewed-by/v1", "commit": index["commit"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "declarations": {name: {"hash": by_name[name]["hash"], "kind": by_name[name]["kind"], "url": by_name[name]["url"],
                                     "tally": tally(marks.get(name, [])), "marks": marks.get(name, []),
                                     "problems": found.get(name, []), **({"tests": tests[name]} if name in tests else {})}
@@ -345,6 +350,8 @@ footer { max-width: 1280px; margin: 0 auto; padding: 0 16px 40px; color: var(--f
 
 SCRIPT = r"""
 const SETTINGS = JSON.parse(document.getElementById('settings').textContent);
+// A pull request of the library, as a reference names it: `TauCeti#123`.
+const PR = new RegExp(SETTINGS.library.repo.split('/').pop().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '#(\\d+)', 'g');
 const $ = id => document.getElementById(id);
 const DEFS = new Set(['def', 'abbrev', 'structure', 'class', 'inductive', 'instance', 'class inductive']);
 const MEANING = {'Reviewed-by': 'it is the intended mathematical notion', 'Tested-by': 'the key results listed as its tests check out'};
@@ -369,7 +376,7 @@ function prose(text) {
 const when = s => { const d = new Date(s); return isNaN(d) ? s : d.toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'}); };
 // The evidence store's issue forms (evidence-store), with the declaration and the commit shown filled in.
 function formLink(template, title, name) {
-  const q = new URLSearchParams({template, title: title + name, decl: name, commit: SETTINGS.tauceti});
+  const q = new URLSearchParams({template, title: title + name, decl: name, commit: SETTINGS.commit});
   return 'https://github.com/' + SETTINGS.repo + '/issues/new?' + q.toString();
 }
 const reviewLink = name => formLink(SETTINGS.forms.review, 'Review: ', name);
@@ -495,7 +502,7 @@ function testCount(t) {
   if (t.suggested) parts.push(t.suggested + ' proposed');
   return parts.join(' · ');
 }
-const PASSES = {passes: '<span class="pass">passes</span>', sorry: '<span class="fail">has sorry</span>', missing: '<span class="fail">not in Tau Ceti at this commit</span>'};
+const PASSES = {passes: '<span class="pass">passes</span>', sorry: '<span class="fail">has sorry</span>', missing: '<span class="fail">not in ' + esc(SETTINGS.library.name) + ' at this commit</span>'};
 function testsHtml(tests) {
   const total = tests.results.length + tests.suggested.length;
   const results = tests.results.map(r => '<div class="test"><p class="line">' + (PASSES[r.status] || '') + ' · ' +
@@ -507,7 +514,7 @@ function testsHtml(tests) {
     ', ' + when(t.at) + (t.issue ? ' · <a href="' + esc(t.url || issueUrl(t.issue)) + '">Issue #' + esc(t.issue) + '</a>' : '') + '</p>' + prose(t.test) +
     (t.statement ? '<pre>' + esc(t.statement) + '</pre>' : '') +
     (t.catches ? '<p class="note">Would catch: ' + esc(t.catches) + '</p>' : '') + '</div>').join('');
-  return '<div class="marks"><span class="mark summary tested" title="What it passes: key results in Tau Ceti listed as its tests"><span class="tick" aria-hidden="true">✓</span>' +
+  return '<div class="marks"><span class="mark summary tested" title="What it passes: key results in ' + esc(SETTINGS.library.name) + ' listed as its tests"><span class="tick" aria-hidden="true">✓</span>' +
     '<span class="trailer">Tested by</span> <span class="who">' + esc(testCount(tests.tally) || 'nothing that passes yet') + '</span></span></div>' +
     '<details class="which"' + (total <= 3 ? ' open' : '') + '><summary>Which (' + total + ')</summary>' +
     (results ? '<p class="head">Key results listed as tests</p>' + results : '') + (suggested ? '<p class="head">Proposed tests</p>' + suggested : '') + '</details>';
@@ -520,14 +527,14 @@ function namedHtml(name) {
     // a roadmap links its STATUS.md; Voyager names the pull requests it announced
     if (ref.text && ref.url) return '<a href="' + esc(ref.url) + '">' + esc(ref.text) + '</a>';
     if (ref.text) {
-      return esc(ref.text).replace(/TauCeti#(\d+)/g, '<a href="https://github.com/TauCetiProject/TauCeti/pull/$1">TauCeti#$1</a>') +
+      return esc(ref.text).replace(PR, (all, n) => '<a href="https://github.com/' + SETTINGS.library.repo + '/pull/' + n + '">' + all + '</a>') +
         (s.agent === 'Voyager' && s.at ? ', ' + when(s.at) : '');
     }
     if (ref.url) return '<a href="' + esc(ref.url) + '">' + esc(s.agent || ('@' + s.by)) + '</a>';
     return s.agent ? esc(s.agent) + (s.by ? ' via @' + esc(s.by) : '') : esc(s.by ? '@' + s.by : 'a reader');
   });
   const c = named.coverage;
-  const cover = c ? '<br><span class="from">What it says rests on ' + c.members + ' Tau Ceti declaration' + (c.members === 1 ? '' : 's') +
+  const cover = c ? '<br><span class="from">What it says rests on ' + c.members + ' ' + esc(SETTINGS.library.name) + ' declaration' + (c.members === 1 ? '' : 's') +
     ' (itself included): ' + c.people + ' reviewed by people' + (c.any > c.people ? ', ' + c.any + ' counting AI agents' : '') +
     (c.problems ? ', ' + c.problems + ' with an open problem' : '') + '.</span>' : '';
   return '<p class="namedline"><strong>' + esc(named.name) + '</strong>' + (named.about ? ' — ' + esc(named.about) : '') +
@@ -601,7 +608,7 @@ async function renderPanel() {
     '<p class="sub">Reviews</p>' + (entry && entry.marks.length ? '<div class="marks">' + tallyHtml(entry) + '</div>' +
       '<details class="who"' + (entry.marks.length <= 3 ? ' open' : '') + '><summary>Who (' + entry.marks.length + ')</summary>' +
       whoHtml(entry) + '</details>' : '<p class="empty">No reviews yet.</p>') +
-    '<p class="sub">Tests</p>' + (entry && entry.tests ? testsHtml(entry.tests) : '<p class="empty">No tests yet: no example in Tau Ceti names it, and none is listed or suggested.</p>') +
+    '<p class="sub">Tests</p>' + (entry && entry.tests ? testsHtml(entry.tests) : '<p class="empty">No tests yet: none is listed or proposed.</p>') +
     '<p class="sub">In ' + esc(data.module.split('.').slice(-1)[0]) + '</p><div class="siblings">' + data.declarations.map(d =>
       '<button data-name="' + esc(d.name) + '"' + (d.name === name ? ' aria-current="true"' : '') + '>' + esc(d.name.split('.').slice(-1)[0]) + '</button>').join('') + '</div>';
   const file = $('file');
@@ -675,11 +682,18 @@ def page(index: dict, settings: dict, reviews: dict, named_decls: dict) -> str:
     entries = reviews["declarations"].values()
     marks = sum(len(e["marks"]) for e in entries)
     open_problems = sum(p["status"] == "open" for e in entries for p in e["problems"])
-    config = json.dumps({"repo": settings["repo"], "bulk_issue": settings["bulk_issue"], "count": total, "tauceti": index["tauceti"],
+    lib = settings["library"]
+    name, title = html.escape(lib["name"]), html.escape(lib.get("title") or lib["name"])
+    root = html.escape(lib.get("root") or lib["name"].replace(" ", ""))
+    config = json.dumps({"repo": settings["repo"], "count": total, "commit": index["commit"],
+                         "library": {"name": lib["name"], "repo": lib["repo"]},
                          # evidence-store's issue forms, which the buttons open
                          "forms": {kind: form["file"] for kind, form in FORMS.items()}})
     config = config.replace("<", "\\u003c")
-    bulk = f"https://github.com/{settings['repo']}/issues/{settings['bulk_issue']}"
+    bulk = settings.get("bulk_issue")
+    bulk_text = (f"""  <p>Marking many at once: comment lines like <code>Reviewed-by: {root}.X.y — what you checked</code>, <code>Test: {root}.X.y — {root}.X.y_zero — what it checks</code> or <code>Named: {root}.X.y — its name — a sentence</code> on <a href="https://github.com/{html.escape(settings['repo'])}/issues/{bulk}">issue #{bulk}</a>. AI agents use the same routes and name the agent, model and session; their marks are shown apart from people's.</p>
+""" if bulk else "  <p>AI agents use the same forms and name the agent, model and session; their marks are shown apart from people's.</p>\n")
+    named_from = html.escape(lib.get("named_from") or "the evidence store")
     legend = "".join(f"<dt>{t}</dt><dd>{m}</dd>" for t, m in MEANING.items())
     repo = html.escape(settings["repo"])
     # Modules that did not build at the pinned commit: the dataset leaves them out, with their
@@ -694,16 +708,16 @@ def page(index: dict, settings: dict, reviews: dict, named_decls: dict) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reviewed-by marks</title>
-<meta name="description" content="Search every Tau Ceti declaration and leave review marks from the browser, without pull requests. A test.">
+<meta name="description" content="Search every declaration of {title} and leave review marks from the browser, without pull requests. A test.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✓</text></svg>">
 <style>{STYLE}</style>
 </head>
 <body>
 <header>
   <p class="eyebrow">Test · review marks</p>
-  <h1>Reviewed-by for Tau Ceti</h1>
-  <p class="lede">Every declaration of Tau Ceti, searchable, with who has checked which and on which version, recorded from the browser without pull requests.</p>
-  <p class="meta">Tau Ceti <a href="https://github.com/TauCetiProject/TauCeti/tree/{html.escape(index['tauceti'])}">{html.escape(index['tauceti'][:7])}</a> · {total:,} declarations in {len(index['modules']):,} modules · {named_count:,} named{f" · {marks} review{'s' if marks != 1 else ''}" if marks else ''}{f" · {open_problems} open problem{'s' if open_problems != 1 else ''}" if open_problems else ''}</p>
+  <h1>Reviewed-by for {title}</h1>
+  <p class="lede">Every declaration of {title}, searchable, with who has checked which and on which version, recorded from the browser without pull requests.</p>
+  <p class="meta">{name} <a href="https://github.com/{html.escape(lib['repo'])}/tree/{html.escape(index['commit'])}">{html.escape(index['commit'][:7])}</a> · {total:,} declarations in {len(index['modules']):,} modules · {named_count:,} named{f" · {marks} review{'s' if marks != 1 else ''}" if marks else ''}{f" · {open_problems} open problem{'s' if open_problems != 1 else ''}" if open_problems else ''}</p>
 </header>
 <details class="how">
   <summary>How to leave a mark</summary>
@@ -712,12 +726,11 @@ def page(index: dict, settings: dict, reviews: dict, named_decls: dict) -> str:
     <li>A bot records the review in the evidence store of this repository, answers on the issue and closes it. There is no pull request, and this page updates within a few minutes.</li>
     <li>A review is keyed by the declaration's <em>meaning hash</em>, which changes when the declaration, or anything it rests on, changes meaning, and not when it is renamed, reformatted or re-proved. When it changes, the mark stays but is greyed, as <em>earlier version</em> if the declaration itself was rewritten, or as <em>something it rests on changed since</em> if it reads the same but a definition it uses moved. A renamed declaration keeps its marks. Comment <code>/withdraw</code> on your review's issue to take it back.</li>
     <li>Each declaration counts its reviews, people apart from AI agents; <strong>Who</strong> lists them, with dates, versions and evidence.</li>
-    <li><strong>Named</strong> shows only the named results and notable definitions: the ones the roadmaps' status files and Voyager's announcements single out, rather than the API and proof steps around them.</li>
+    <li><strong>Named</strong> shows only the named results and notable definitions: the ones {named_from} single out, rather than the API and proof steps around them.</li>
   </ol>
-  <p><strong>Tests</strong> are what a declaration passes, rather than a mark: key results listed as its tests with <strong>List a test</strong>, and tests anyone proposes with <strong>Suggest a test</strong>: a property it should have, which stays open until someone proves it in Tau Ceti and comments <code>/met &lt;the declaration that proves it&gt;</code> on its issue (or <code>/failed</code>, if it turns out false: then report the problem). A test passes while it is in Tau Ceti at the pinned commit without <code>sorry</code>. <strong>Which</strong> shows each with its statement.</p>
+  <p><strong>Tests</strong> are what a declaration passes, rather than a mark: key results listed as its tests with <strong>List a test</strong>, and tests anyone proposes with <strong>Suggest a test</strong>: a property it should have, which stays open until someone proves it in {name} and comments <code>/met &lt;the declaration that proves it&gt;</code> on its issue (or <code>/failed</code>, if it turns out false: then report the problem). A test passes while it is in {name} at the pinned commit without <code>sorry</code>. <strong>Which</strong> shows each with its statement.</p>
   <p>If a declaration is wrong, press <strong>Report a problem</strong> instead and say why, and how to fix it if you know. The report is the issue for fixing it: it stays open, and the page flags the declaration, until its reporter or a maintainer closes it as completed (fixed) or as not planned (not a problem), or comments <code>/fixed &lt;commit&gt;</code>, <code>/intended</code> or <code>/invalid</code>.</p>
-  <p>Marking many at once: comment lines like <code>Reviewed-by: TauCeti.X.y — what you checked</code>, <code>Test: TauCeti.X.y — TauCeti.X.y_zero — what it checks</code> or <code>Named: TauCeti.X.y — its name — a sentence</code> on <a href="{html.escape(bulk)}">issue #{settings['bulk_issue']}</a>. AI agents use the same routes and name the agent, model and session; their marks are shown apart from people's.</p>
-  <dl class="legend">{legend}</dl>
+{bulk_text}  <dl class="legend">{legend}</dl>
 </details>
 <div class="bar"><div class="bar-inner">
   <input id="search" type="search" placeholder="Search {total:,} declarations: a name, part of one, or words from a docstring" autocomplete="off" spellcheck="false" aria-label="Search declarations">
@@ -732,7 +745,7 @@ def page(index: dict, settings: dict, reviews: dict, named_decls: dict) -> str:
   <aside class="panel" id="panel" aria-live="polite"></aside>
 </div>
 <footer>
-  <p>The marks as data, for the atlas or Tau Ceti's own documentation: <a href="reviews.json">reviews.json</a>. Everything shown here comes from the <a href="https://github.com/LeanTrustBuilders">LeanTrustBuilders</a> suite: declarations and hashes from a dataset extracted from the compiled library by <a href="https://github.com/LeanTrustBuilders/extractor">trust-extract</a>; reviews, tests, problems and names from the evidence store <a href="https://github.com/{repo}/tree/main/evidence">evidence/</a>, filled from this repository's issues by <a href="https://github.com/LeanTrustBuilders/evidence-store">evidence-store</a>; what applies now computed by <a href="https://github.com/LeanTrustBuilders/evidence-core">evidence-core</a>. In <a href="https://github.com/{repo}">{repo}</a>; nothing here changes Tau Ceti.{missing}</p>
+  <p>The marks as data, for other tools: <a href="reviews.json">reviews.json</a>. Everything shown here comes from the <a href="https://github.com/LeanTrustBuilders">LeanTrustBuilders</a> suite: declarations and hashes from a dataset extracted from the compiled library by <a href="https://github.com/LeanTrustBuilders/extractor">trust-extract</a>; reviews, tests, problems and names from the evidence store <a href="https://github.com/{repo}/tree/main/evidence">evidence/</a>, filled from this repository's issues by <a href="https://github.com/LeanTrustBuilders/evidence-store">evidence-store</a>; what applies now computed by <a href="https://github.com/LeanTrustBuilders/evidence-core">evidence-core</a>. In <a href="https://github.com/{repo}">{repo}</a>; nothing here changes {name}.{missing}</p>
 </footer>
 <script type="application/json" id="settings">{config}</script>
 <script>{SCRIPT}</script>
@@ -746,13 +759,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dataset", type=Path, required=True, help="the dataset (S2) of the pinned commit")
     parser.add_argument("--store", type=Path, default=ROOT / "evidence", help="the evidence store (S3)")
+    parser.add_argument("--settings", type=Path, default=ROOT / "data" / "settings.json",
+                        help="the library and the store's repository")
+    parser.add_argument("--index", type=Path, default=ROOT / "data" / "declarations.json",
+                        help="the declarations, as dataset_declarations.py writes them")
+    parser.add_argument("--out", type=Path, default=ROOT / "site", help="where to write the page")
     args = parser.parse_args()
-    index = json.loads((ROOT / "data" / "declarations.json").read_text(encoding="utf-8"))
-    settings = json.loads((ROOT / "data" / "settings.json").read_text(encoding="utf-8"))
+    index = json.loads(args.index.read_text(encoding="utf-8"))
+    settings = json.loads(args.settings.read_text(encoding="utf-8"))
     ev = Evidence.resolve(Store.load(args.store).records, Dataset.load(args.dataset))
     reviews = data(index, ev)
     named_file = named(index, ev)
-    out = ROOT / "site"
+    out = args.out
     if (out / "data").exists():
         shutil.rmtree(out / "data")
     (out / "data" / "m").mkdir(parents=True)

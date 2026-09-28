@@ -18,7 +18,7 @@ DECLS = [("TauCeti.X.f", "TauCeti.NumberTheory.X", "definition", False, "aaaaaaa
 # f_one rests on f
 EDGES = [(1, 0)]
 
-INDEX = {"tauceti": COMMIT, "read": "2026-09-21T15:00:00Z",
+INDEX = {"commit": COMMIT, "read": "2026-09-21T15:00:00Z",
          "modules": [{"module": "TauCeti.NumberTheory.X", "path": "TauCeti/NumberTheory/X.lean", "doc": "# X\n\nAbout X.", "url": "u", "declarations": 2},
                      {"module": "TauCeti.Algebra.Y", "path": "TauCeti/Algebra/Y.lean", "doc": "", "url": "v", "declarations": 2}],
          "declarations": [
@@ -30,7 +30,8 @@ INDEX = {"tauceti": COMMIT, "read": "2026-09-21T15:00:00Z",
               "line": 1, "end": 1, "doc": "A map.", "source": "def g := 2", "hash": "cccccccccccccccc", "url": "u3"},
              {"name": "TauCeti.Y.g_bad", "kind": "theorem", "keyword": "theorem", "module": "TauCeti.Algebra.Y", "path": "TauCeti/Algebra/Y.lean",
               "line": 3, "end": 3, "doc": "", "source": "theorem g_bad : g = 2", "hash": "dddddddddddddddd", "url": "u4"}]}
-SETTINGS = {"repo": "LeanTrustBuilders/reviewed-by-pilot", "bulk_issue": 1, "tauceti": COMMIT}
+SETTINGS = {"repo": "LeanTrustBuilders/reviewed-by-pilot", "bulk_issue": 1, "tauceti": COMMIT,
+            "library": {"name": "Tau Ceti", "repo": "TauCetiProject/TauCeti", "root": "TauCeti"}}
 
 
 def dataset(root: Path) -> Dataset:

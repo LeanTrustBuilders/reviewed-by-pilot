@@ -6,5 +6,11 @@
   "repo": "CBirkbeck/tauceti-reviewed-by-test",
   "until": "2026-09-25T16:00:00Z",
   "note": "ledger entries made before the fork came from issues of this repository"
+ },
+ "library": {
+  "name": "Tau Ceti",
+  "repo": "TauCetiProject/TauCeti",
+  "root": "TauCeti",
+  "named_from": "the roadmaps' status files and Voyager's announcements"
  }
 }

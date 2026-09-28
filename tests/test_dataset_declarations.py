@@ -40,7 +40,8 @@ class Read(unittest.TestCase):
         (root / "ds" / "meta.json").write_text(json.dumps(meta))
         (root / "src" / "TauCeti" / "NumberTheory").mkdir(parents=True)
         (root / "src" / "TauCeti" / "NumberTheory" / "X.lean").write_text(X)
-        self.found = {d["name"]: d for d in read(Dataset.load(root / "ds"), root / "src", mini.COMMIT)["declarations"]}
+        self.ds, self.src = Dataset.load(root / "ds"), root / "src"
+        self.found = {d["name"]: d for d in read(self.ds, self.src, mini.COMMIT, "TauCetiProject/TauCeti")["declarations"]}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -56,6 +57,14 @@ class Read(unittest.TestCase):
 
     def test_a_theorem_is_shown_by_its_statement(self):
         self.assertEqual(self.found["TauCeti.X.f_one"]["source"], "theorem f_one : f = 1")
+
+    def test_a_slice_of_modules(self):
+        """With `modules`, the declarations and modules under those prefixes only; links go to the repo."""
+        kept = read(self.ds, self.src, mini.COMMIT, "o/lib", ["TauCeti.NumberTheory"])
+        none = read(self.ds, self.src, mini.COMMIT, "o/lib", ["TauCeti.Elsewhere"])
+        self.assertEqual(sorted(d["name"] for d in kept["declarations"]), ["TauCeti.X.f", "TauCeti.X.f_one"])
+        self.assertTrue(all(d["url"].startswith("https://github.com/o/lib/blob/") for d in kept["declarations"]))
+        self.assertEqual((none["declarations"], none["modules"]), ([], []))
 
 
 if __name__ == "__main__":

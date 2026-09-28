@@ -109,7 +109,7 @@ class Page(unittest.TestCase):
         # The forms are evidence-store's.
         for kind in ("review", "challenge", "problem", "test"):
             self.assertIn(f'"{kind}": "evidence-{kind}.yml"', html)
-        self.assertIn("decl: name, commit: SETTINGS.tauceti", html)
+        self.assertIn("decl: name, commit: SETTINGS.commit", html)
         self.assertIn("4 declarations in 2 modules · 1 named · 3 reviews · 1 open problem", html)
         self.assertIn('"repo": "LeanTrustBuilders/reviewed-by-pilot"', html)
 
