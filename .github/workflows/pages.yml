@@ -34,7 +34,11 @@ jobs:
           token: ${{ github.token }}
       - run: python3 -m unittest discover -s tests
       - name: Build the page
-        run: python3 scripts/build_site.py --dataset "${{ steps.declarations.outputs.dataset }}"
+        run: |
+          # The stores this one imports (evidence/store.json): reviews made there of the Mathlib
+          # declarations Tau Ceti rests on show on the page too, marked with their store.
+          evidence-store fetch-imports --store evidence --out "$RUNNER_TEMP/imports"
+          python3 scripts/build_site.py --dataset "${{ steps.declarations.outputs.dataset }}" --imports "$RUNNER_TEMP/imports"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

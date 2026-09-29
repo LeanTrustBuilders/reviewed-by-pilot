@@ -13,7 +13,10 @@ The page (Reviewed-by's, kept as it was) is fed by the LeanTrustBuilders suite:
 - the declarations and their hashes come from the dataset (S2) of the pinned commit, read into
   data/declarations.json by dataset_declarations.py;
 - everything people and AI agents said about them is in the evidence store evidence/ (S3), which
-  evidence-store's intake fills from the repository's issues and comments;
+  evidence-store's intake fills from the repository's issues and comments; with `--imports`, also
+  the records of the stores it imports (S3, "Imported records"), where `evidence-store
+  fetch-imports` fetched them: a review of a Mathlib definition made in another library's store
+  shows here, on that definition, marked with its store;
 - what applies now (a review current or on an earlier version, a problem open or fixed, a test
   passing, a challenge met) is computed by evidence-core against the dataset.
 
@@ -48,13 +51,16 @@ except ImportError:  # checkouts of evidence-core and evidence-store next to thi
 from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
 from evidence_core import records as evidence_records
 from evidence_core import rubric as rb
-from evidence_core.store import Store
+from evidence_core.store import Store, with_imports
 from evidence_core.views import by_view, views_on
 from evidence_store.forms import FORMS
 
 ROOT = Path(__file__).resolve().parents[1]
 MEANING = {"Reviewed-by": "it is the intended mathematical notion"}
 DEFINITIONS = {"def", "structure", "class", "inductive", "instance"}
+# The kinds the page knows, from the dataset's (as dataset_declarations.py reads them).
+KIND = {"theorem": "theorem", "definition": "def", "instance": "instance", "class": "class",
+        "structure": "structure", "inductive": "inductive", "axiom": "def", "opaque": "def"}
 # The state of a problem, as the page shows it: open, or how it was resolved (S3 statuses).
 PROBLEM_STATE = {"open": "open", "fixed": "fixed", "intended": "intended", "invalid": "invalid", "withdrawn": "withdrawn"}
 # The state of a proposed test (an S3 challenge).
@@ -91,7 +97,8 @@ def marks_from_evidence(index: dict, ev: Evidence) -> dict:
             marks[name].append({
                 "trailer": "Reviewed-by", **who(v["by"]), "hash": v["hash"], "current": v["applies"],
                 "status": v["status"], "at": v["at"], "evidence": v["text"], "issue": number, "url": url,
-                "id": v["id"], **({"from": v["renamedFrom"]} if v["renamedFrom"] else {})})
+                "id": v["id"], **({"from": v["renamedFrom"]} if v["renamedFrom"] else {}),
+                **({"store": v["source"]} if v.get("source") else {})})
     for items in marks.values():
         items.sort(key=lambda m: (not m["current"], m["kind"] == "agent", m["at"]))
     return marks
@@ -198,6 +205,30 @@ def named_from_evidence(index: dict, ev: Evidence) -> dict:
     return out
 
 
+def with_upstream(index: dict, ev: Evidence, ds: Dataset) -> dict:
+    """The index, with each declaration of the libraries underneath that an imported record is about
+    (a review of a Mathlib definition made in another store): the page has none of their sources, so
+    each shows its header and docstring, and links to its documentation, under its own module."""
+    have = {item["name"] for item in index["declarations"]}
+    names = sorted(n for n, rows in ev.by_decl.items() if n not in have and n in ds.by_name
+                   and not ds.by_name[n].is_project and any(r.get("id") in ev.source for r, _ in rows))
+    out = dict(index, declarations=list(index["declarations"]), modules=list(index["modules"]))
+    known = {m["module"] for m in out["modules"]}
+    for n in names:
+        d = ds.by_name[n]
+        kind = KIND.get(d.kind, "def")
+        docs = (f"https://leanprover-community.github.io/mathlib4_docs/{d.module.replace('.', '/')}.html"
+                if d.package == "mathlib" else "")
+        out["declarations"].append({"name": n, "kind": kind, "keyword": kind, "module": d.module, "path": "", "line": 0,
+                                    "end": 0, "doc": (ds.facet_row("docstring", n) or {}).get("text", ""),
+                                    "source": f"{kind} {n}", "hash": d.meaning, "url": docs + (f"#{n}" if docs else ""),
+                                    "upstream": d.package})
+        if d.module not in known:
+            known.add(d.module)
+            out["modules"].append({"module": d.module, "path": "", "doc": "", "url": docs, "declarations": 0})
+    return out
+
+
 def summary(doc: str, limit: int = 120) -> str:
     """A docstring's first sentence, in plain text."""
     text = " ".join(doc.split())
@@ -230,7 +261,8 @@ def shards(index: dict) -> dict:
     for item in index["declarations"]:
         if item["module"] in position:
             out[position[item["module"]]]["declarations"].append(
-                {key: item.get(key) for key in ("name", "kind", "keyword", "line", "end", "doc", "source", "hash", "url")})
+                {key: item.get(key) for key in ("name", "kind", "keyword", "line", "end", "doc", "source", "hash", "url", "upstream")
+                 if key != "upstream" or item.get(key)})
     return out
 
 
@@ -547,8 +579,9 @@ function markHtml(m, named = true) {
   const who = m.kind === 'agent' ? esc(m.agent) + ' <span class="ai">AI</span> via @' + esc(m.by) : '@' + esc(m.by);
   const tip = m.trailer + ': ' + (MEANING[m.trailer] || '') + '. Version ' + m.hash + ', ' + when(m.at) + '.' + (m.evidence ? ' Evidence: ' + m.evidence : '');
   const href = m.url || (m.issue ? 'https://github.com/' + SETTINGS.repo + '/issues/' + m.issue : '#');
-  const note = m.current ? (m.status === 'renamed' ? ' <span class="note">made on ' + esc(m.from) + '</span>' : '') :
-    ' <span class="note">' + (m.status === 'stale-underneath' ? 'something it rests on changed since' : 'earlier version') + '</span>';
+  const note = (m.current ? (m.status === 'renamed' ? ' <span class="note">made on ' + esc(m.from) + '</span>' : '') :
+    ' <span class="note">' + (m.status === 'stale-underneath' ? 'something it rests on changed since' : 'earlier version') + '</span>') +
+    (m.store ? ' <span class="note">from ' + esc(m.store.split('/').pop()) + '</span>' : '');
   return '<a class="mark ' + esc(m.kind) + (m.current ? '' : ' stale') + '" href="' + esc(href) + '" title="' + esc(tip) + '"><span class="tick" aria-hidden="true">✓</span>' +
     (named ? '<span class="trailer">' + esc(m.trailer) + '</span> ' : '') + '<span class="who">' + who + '</span>' + note + '</a>';
 }
@@ -592,15 +625,17 @@ async function renderPanel() {
   const lines = item.source.split('\n'), long = lines.length > 60;
   panel.innerHTML = '<button class="quiet back" id="back">← Back</button>' +
     '<span class="kw' + (DEFS.has(item.keyword) ? ' def' : '') + '">' + esc(item.keyword) + '</span><h2>' + nameHtml(name) + '</h2>' +
-    '<p class="where"><a href="' + esc(data.url) + '">' + esc(data.module) + '</a> (<button class="linkish" id="file">this file</button>), lines ' +
-    item.line + '–' + item.end + ' · version <span class="mono">' + esc(item.hash) + '</span></p>' +
+    '<p class="where"><a href="' + esc(data.url) + '">' + esc(data.module) + '</a>' + (item.upstream
+      ? ' · a declaration of ' + esc(item.upstream) + ' that ' + esc(SETTINGS.library.name) + ' rests on'
+      : ' (<button class="linkish" id="file">this file</button>), lines ' + item.line + '–' + item.end) +
+    ' · version <span class="mono">' + esc(item.hash) + '</span></p>' +
     namedHtml(name) + (item.doc ? '<div class="doc">' + prose(item.doc) + '</div>' : '') +
     '<pre><code id="src">' + esc(long ? lines.slice(0, 60).join('\n') + '\n…' : item.source) + '</code></pre>' +
     '<div class="actions"><a class="primary" href="' + esc(reviewLink(name, item.hash)) + '">Review this</a>' +
     '<a class="quiet" href="' + esc(suggestLink(name, item.hash)) + '">Suggest a test</a>' +
     '<a class="quiet" href="' + esc(testLink(name)) + '">List a test</a>' +
     '<a class="quiet warn" href="' + esc(problemLink(name, item.hash)) + '">Report a problem</a>' +
-    '<button class="quiet" id="copy">Copy name</button><a class="quiet" href="' + esc(item.url) + '">Source on GitHub</a>' + (long ? '<button class="quiet" id="all">Show all ' + lines.length + ' lines</button>' : '') + '</div>' +
+    '<button class="quiet" id="copy">Copy name</button><a class="quiet" href="' + esc(item.url) + '">' + (item.upstream ? 'Documentation' : 'Source on GitHub') + '</a>' + (long ? '<button class="quiet" id="all">Show all ' + lines.length + ' lines</button>' : '') + '</div>' +
     (entry && entry.problems && entry.problems.length ? '<p class="sub">Problems</p>' + entry.problems.map(problemHtml).join('') : '') +
     '<p class="sub">Reviews</p>' + (entry && entry.marks.length ? '<div class="marks">' + tallyHtml(entry) + '</div>' +
       '<details class="who"' + (entry.marks.length <= 3 ? ' open' : '') + '><summary>Who (' + entry.marks.length + ')</summary>' +
@@ -761,11 +796,19 @@ def main() -> int:
     parser.add_argument("--index", type=Path, default=ROOT / "data" / "declarations.json",
                         help="the declarations, as dataset_declarations.py writes them")
     parser.add_argument("--out", type=Path, default=ROOT / "site", help="where to write the page")
+    parser.add_argument("--imports", type=Path, help="where the stores the store imports were fetched "
+                                                     "(evidence-store fetch-imports)")
     args = parser.parse_args()
     index = json.loads(args.index.read_text(encoding="utf-8"))
     settings = json.loads(args.settings.read_text(encoding="utf-8"))
     store = Store.load(args.store)
-    ev = Evidence.resolve(store.records, Dataset.load(args.dataset))
+    ds = Dataset.load(args.dataset)
+    if args.imports:
+        imported = with_imports(store, args.imports)
+        ev = Evidence.resolve(imported.records, ds, sources=imported.sources)
+        index = with_upstream(index, ev, ds)
+    else:
+        ev = Evidence.resolve(store.records, ds)
     reviews = data(index, ev, rb.known(store.rubric))
     named_file = named(index, ev)
     out = args.out

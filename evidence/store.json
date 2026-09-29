@@ -10,5 +10,10 @@
   "asset": "dataset.tar.gz"
  },
  "claims": [],
- "maintainers": []
+ "maintainers": [],
+ "imports": [
+  {
+   "repo": "LeanTrustBuilders/mathlib-probability-evidence"
+  }
+ ]
 }
