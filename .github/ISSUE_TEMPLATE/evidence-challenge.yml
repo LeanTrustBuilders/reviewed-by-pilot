@@ -40,18 +40,17 @@ body:
   - type: checkboxes
     id: modes
     attributes:
-      label: "Failure modes it tests"
-      description: "Optional: which of the ways a definition goes wrong it would catch."
+      label: "Kinds of problem it would catch"
+      description: "Optional: which of the ways a declaration goes wrong it would catch."
       options:
-        - label: "F1: the intended object, not a different notion"
-        - label: "F2: its conventions: normalization, indexing, signs"
-        - label: "F3: its edge cases: degenerate or boundary inputs"
-        - label: "F4: junk values: defaults outside the intended domain"
-        - label: "F5: not vacuous, not trivial"
-        - label: "F6: no arbitrary choice"
-        - label: "F7: what it rests on: the definitions and instances underneath"
-        - label: "F9: its generality, against the source's"
-        - label: "naming: its name and docstring do not mislead"
+        - label: "object: a different object"
+        - label: "convention: a different convention"
+        - label: "edge-cases: different edge cases"
+        - label: "junk: a junk value"
+        - label: "vacuous: vacuous or trivial"
+        - label: "choice: an arbitrary choice"
+        - label: "generality: less general than the source"
+        - label: "naming: a misleading name or docstring"
   - type: dropdown
     id: involvement
     attributes:

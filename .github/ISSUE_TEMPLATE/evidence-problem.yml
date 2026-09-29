@@ -25,14 +25,13 @@ body:
     attributes:
       label: "What is wrong"
       options:
-        - "F1 a different object"
-        - "F2 a different convention"
-        - "F3 different edge cases"
-        - "F4 a junk value"
-        - "F5 vacuous or trivial"
-        - "F6 an arbitrary choice"
-        - "F7 something wrong underneath"
-        - "F9 less general than the source"
+        - "a different object"
+        - "a different convention"
+        - "different edge cases"
+        - "a junk value"
+        - "vacuous or trivial"
+        - "an arbitrary choice"
+        - "less general than the source"
         - "a misleading name or docstring"
         - "something else"
     validations:

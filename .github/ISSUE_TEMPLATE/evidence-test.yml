@@ -32,11 +32,6 @@ body:
     attributes:
       label: "What it checks"
       description: "Optional for people, required for AI agents."
-  - type: input
-    id: meets
-    attributes:
-      label: "Meets the challenge"
-      description: "Optional: the id of a challenge it meets (16 hexadecimal digits)."
   - type: dropdown
     id: involvement
     attributes:

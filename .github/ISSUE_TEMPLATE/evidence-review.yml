@@ -31,20 +31,19 @@ body:
       label: "What you checked"
       description: "Tick what you checked. What is left unticked is shown as not checked."
       options:
-        - label: "F1: the intended object, not a different notion"
-        - label: "F2: its conventions: normalization, indexing, signs"
-        - label: "F3: its edge cases: degenerate or boundary inputs"
-        - label: "F4: junk values: defaults outside the intended domain"
-        - label: "F5: not vacuous, not trivial"
-        - label: "F6: no arbitrary choice"
-        - label: "F7: what it rests on: the definitions and instances underneath"
-        - label: "F9: its generality, against the source's"
+        - label: "object: it is the intended notion, or states the intended result, and not a different one"
+        - label: "convention: it follows the source's conventions: normalization, indexing, signs, and the instances it picks up"
+        - label: "edge-cases: it decides degenerate and boundary inputs as the source does"
+        - label: "junk: no default value outside the intended domain changes what it means"
+        - label: "vacuous: it is neither vacuous nor trivial"
+        - label: "choice: it makes no arbitrary choice where the intended object is canonical"
+        - label: "generality: it is as general as the source"
         - label: "naming: its name and docstring do not mislead"
   - type: textarea
     id: caveats
     attributes:
       label: "Caveats"
-      description: "One per line, starting with the failure mode: `F3: false at n = 0`."
+      description: "One per line, starting with what it is about: `edge-cases: false at n = 0`."
   - type: textarea
     id: rationale
     attributes:
