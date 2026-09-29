@@ -92,7 +92,7 @@ class Recorded(unittest.TestCase):
         self.folder = tempfile.TemporaryDirectory()
         root = Path(self.folder.name)
         self.ds = mini.dataset(root / "ds")
-        self.store = Store.init(root / "evidence", default_config("LeanTrustBuilders/reviewed-by-pilot", "TauCeti"))
+        self.store = Store.init(root / "evidence", default_config("LeanTrustBuilders/reviewed-by-pilot", "TauCeti", "Tau Ceti"))
         self.entries = [
             {"decl": "TauCeti.X.f_one", "name": "The value of f", "what": "result", "about": "f is one.",
              "source": {"roadmap": "Functions", "path": "TauCetiRoadmap/Functions/STATUS.md"}},

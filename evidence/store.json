@@ -1,5 +1,6 @@
 {
- "spec": "ltb-evidence-store/0",
+ "spec": "ltb-evidence-store/1",
+ "name": "Tau Ceti",
  "library": {
   "repo": "TauCetiProject/TauCeti",
   "root": "TauCeti"

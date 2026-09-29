@@ -581,7 +581,7 @@ function markHtml(m, named = true) {
   const href = m.url || (m.issue ? 'https://github.com/' + SETTINGS.repo + '/issues/' + m.issue : '#');
   const note = (m.current ? (m.status === 'renamed' ? ' <span class="note">made on ' + esc(m.from) + '</span>' : '') :
     ' <span class="note">' + (m.status === 'stale-underneath' ? 'something it rests on changed since' : 'earlier version') + '</span>') +
-    (m.store ? ' <span class="note">from ' + esc(m.store.split('/').pop()) + '</span>' : '');
+    (m.store ? ' <span class="note">from the ' + esc(m.store.name) + ' store</span>' : '');
   return '<a class="mark ' + esc(m.kind) + (m.current ? '' : ' stale') + '" href="' + esc(href) + '" title="' + esc(tip) + '"><span class="tick" aria-hidden="true">✓</span>' +
     (named ? '<span class="trailer">' + esc(m.trailer) + '</span> ' : '') + '<span class="who">' + who + '</span>' + note + '</a>';
 }
