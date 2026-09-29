@@ -37,9 +37,9 @@ class Page(unittest.TestCase):
                               "hasher": {"name": "semantic_hash", "revision": "r", "local": "ltb-local-v1"}})
         carol = record(ds, "review", g, person("carol"), "2026-09-21T11:00:00Z", 6, verdict="accept")
         p1 = record(ds, "review", g, person("alice"), "2026-09-22T15:00:00Z", 12, verdict="problem",
-                    category="F3", text="It should be 3.", fix="def g := 3")
+                    rubric="ltb-rubric/1", category="edge-cases", text="It should be 3.", fix="def g := 3")
         p2 = record(ds, "review", f, agent("bob"), "2026-09-20T10:00:00Z", 13, verdict="problem",
-                    category="naming", text="The docstring says two.")
+                    rubric="ltb-rubric/1", category="naming", text="The docstring says two.")
         c1 = record(ds, "challenge", g, person("frank"), "2026-09-23T10:00:00Z", 30, text="`g = 2`", catches="an off-by-one")
         c2 = record(ds, "challenge", f, person("frank"), "2026-09-23T10:00:00Z", 31, text="`f = 1`", statement="f = 1")
         cls.records = [
@@ -75,7 +75,7 @@ class Page(unittest.TestCase):
     def test_a_problem_is_open_until_a_status_resolves_it(self):
         [report] = self.out["TauCeti.Y.g"]["problems"]
         self.assertEqual((report["status"], report["what"], report["why"], report["fix"], report["issue"]),
-                         ("open", "F3", "It should be 3.", "def g := 3", 12))
+                         ("open", "different edge cases", "It should be 3.", "def g := 3", 12))
         [fixed] = self.out["TauCeti.X.f"]["problems"]
         self.assertEqual((fixed["status"], fixed["closedBy"], fixed["commit"], fixed["kind"]), ("fixed", "carol", "0123abcd4567", "agent"))
 

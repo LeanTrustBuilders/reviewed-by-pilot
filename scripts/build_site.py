@@ -47,6 +47,7 @@ except ImportError:  # checkouts of evidence-core and evidence-store next to thi
     sys.path[:0] = [str(Path(__file__).resolve().parents[2] / r) for r in ("evidence-core", "evidence-store")]
 from evidence_core import Dataset, Evidence, Policy, coverage as coverage_of
 from evidence_core import records as evidence_records
+from evidence_core import rubric as rb
 from evidence_core.store import Store
 from evidence_core.views import by_view, views_on
 from evidence_store.forms import FORMS
@@ -119,7 +120,7 @@ def closed(v: dict) -> dict:
             **({"metBy": (last["test"] or {}).get("name", "")} if isinstance(last.get("test"), dict) else {})}
 
 
-def problems_from_evidence(index: dict, ev: Evidence) -> dict:
+def problems_from_evidence(index: dict, ev: Evidence, rubrics: dict[str, rb.Rubric]) -> dict:
     """Each declaration's problem reports (neither superseded), open ones first, then the newest first."""
     names = {item["name"] for item in index["declarations"]}
     found = defaultdict(list)
@@ -132,7 +133,7 @@ def problems_from_evidence(index: dict, ev: Evidence) -> dict:
             number, url = issue(v)
             found[name].append({
                 "id": v["id"], "issue": number, "url": url, "status": PROBLEM_STATE.get(v["state"], v["state"]),
-                "what": v["category"] or "other", "why": v["text"], "fix": v["fix"], **who(v["by"]),
+                "what": rb.problem_named(rubrics, v["rubric"], v["category"]), "why": v["text"], "fix": v["fix"], **who(v["by"]),
                 "hash": v["hash"], "current": v["applies"], "at": v["at"], **closed(v)})
     for items in found.values():
         items.sort(key=lambda p: p["at"], reverse=True)
@@ -238,9 +239,9 @@ def named(index: dict, ev: Evidence) -> dict:
             "declarations": named_from_evidence(index, ev)}
 
 
-def data(index: dict, ev: Evidence) -> dict:
+def data(index: dict, ev: Evidence, rubrics: dict[str, rb.Rubric] | None = None) -> dict:
     marks = marks_from_evidence(index, ev)
-    found = problems_from_evidence(index, ev)
+    found = problems_from_evidence(index, ev, rubrics or rb.known())
     tests = tests_from_evidence(index, ev)
     by_name = {item["name"]: item for item in index["declarations"]}
     return {"schema": "reviewed-by/v1", "commit": index["commit"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -355,10 +356,6 @@ const PR = new RegExp(SETTINGS.library.repo.split('/').pop().replace(/[.*+?^${}(
 const $ = id => document.getElementById(id);
 const DEFS = new Set(['def', 'abbrev', 'structure', 'class', 'inductive', 'instance', 'class inductive']);
 const MEANING = {'Reviewed-by': 'it is the intended mathematical notion', 'Tested-by': 'the key results listed as its tests check out'};
-// What a problem report says is wrong: the failure modes of trusting-definitions.md, as the problem form asks.
-const WHAT = {F1: 'A different object', F2: 'A different convention', F3: 'Wrong on edge cases', F4: 'A junk value',
-  F5: 'Vacuous or trivial', F6: 'An arbitrary choice', F7: 'Something wrong underneath', F8: 'Drift', F9: 'Less general than the source',
-  naming: 'Misleading name or docstring', other: 'Something else is off', wrong: 'Wrong', misleading: 'Misleading name or docstring'};
 const CLOSED = {fixed: 'Fixed', intended: 'Intended as it is', invalid: 'Not a problem', withdrawn: 'Withdrawn',
   'not planned': 'Closed without a fix', duplicate: 'Closed as a duplicate'};
 const PAGE = 60;
@@ -559,7 +556,7 @@ function problemHtml(p) {
   const who = p.kind === 'agent' ? esc(p.agent) + ' <span class="ai">AI</span> via @' + esc(p.by) : '@' + esc(p.by);
   const open = p.status === 'open';
   return '<div class="problem' + (open ? '' : ' closed') + '"><p class="head"><span class="state">' + (open ? 'Open' : esc(CLOSED[p.status] || 'Closed')) + '</span> · ' +
-    esc(WHAT[p.what] || 'Problem') + ' · reported by ' + who + ', ' + when(p.at) +
+    esc(p.what.charAt(0).toUpperCase() + p.what.slice(1)) + ' · reported by ' + who + ', ' + when(p.at) +
     (p.current ? '' : ' · <span class="note">about an earlier version; the declaration has changed since</span>') + '</p>' + prose(p.why) +
     (p.fix ? '<p class="fix">Suggested fix</p><pre>' + esc(p.fix) + '</pre>' : '') +
     '<p><a href="' + esc(p.url || issueUrl(p.issue)) + '">Issue #' + esc(p.issue) + '</a>' + (p.closedAt ? ' · ' + esc((CLOSED[p.status] || 'closed').toLowerCase()) + ' by @' + esc(p.closedBy) + ', ' + when(p.closedAt) +
@@ -767,8 +764,9 @@ def main() -> int:
     args = parser.parse_args()
     index = json.loads(args.index.read_text(encoding="utf-8"))
     settings = json.loads(args.settings.read_text(encoding="utf-8"))
-    ev = Evidence.resolve(Store.load(args.store).records, Dataset.load(args.dataset))
-    reviews = data(index, ev)
+    store = Store.load(args.store)
+    ev = Evidence.resolve(store.records, Dataset.load(args.dataset))
+    reviews = data(index, ev, rb.known(store.rubric))
     named_file = named(index, ev)
     out = args.out
     if (out / "data").exists():
