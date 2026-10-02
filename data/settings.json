@@ -1,7 +1,7 @@
 {
  "repo": "LeanTrustBuilders/reviewed-by-pilot",
  "bulk_issue": 1,
- "tauceti": "f881c3329f5fa0a67714188fb68278cddeb9ffb8",
+ "tauceti": "18e52991a5cc8e3f83cfe11bce2b655a78559ee7",
  "inherited_ledger": {
   "repo": "CBirkbeck/tauceti-reviewed-by-test",
   "until": "2026-09-25T16:00:00Z",
